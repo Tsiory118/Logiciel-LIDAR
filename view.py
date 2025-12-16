@@ -29,7 +29,7 @@ class RoadDataModel:
             if data.shape[0] < 8:
                 padding = np.zeros((8 - data.shape[0], data.shape[1]))
                 data = np.vstack([padding, data])
-            data = data[-8:, 1:9]
+            data = data[-8:, 1:9]  # ignorer timestamp, garder 8 colonnes
             if data.shape[1] < 8:
                 padding = np.zeros((8, 8 - data.shape[1]))
                 data = np.hstack([data, padding])
@@ -101,10 +101,11 @@ class Surface3DCanvas(FigureCanvasQTAgg):
 
 # ==================== CSV LIVE WATCHER ====================
 class CSVLiveWatcher:
-    def __init__(self, csv_path, canvas, status_label):
+    def __init__(self, csv_path, canvas, status_label, analysis_label):
         self.csv_path = csv_path
         self.canvas = canvas
         self.status_label = status_label
+        self.analysis_label = analysis_label
         self.last_mtime = os.path.getmtime(csv_path)
         self.timer = QTimer()
         self.timer.timeout.connect(self.check)
@@ -119,8 +120,22 @@ class CSVLiveWatcher:
                 self.canvas.update_surface(model.Z)
                 t = datetime.now().strftime("%H:%M:%S")
                 self.status_label.setText(f"{self.csv_path} | Mise à jour : {t}")
+                self.update_analysis(model.Z)
         except Exception as e:
             self.status_label.setText(f"Erreur CSV : {e}")
+
+    def update_analysis(self, Z):
+        avg_val = np.round(np.mean(Z), 2)
+        max_val = np.max(Z)
+        min_val = np.min(Z)
+        text = (
+            f"<b>Analyse de la qualité de la route :</b><br>"
+            f"- Déformation moyenne : {avg_val} mm<br>"
+            f"- Déformation max : {max_val} mm<br>"
+            f"- Déformation min : {min_val} mm<br>"
+            f"- Échelle : 1 unité = 1 cm²"
+        )
+        self.analysis_label.setText(text)
 
 # ==================== PANNEAU DE CONTROLE ====================
 class ControlPanel(QGroupBox):
@@ -145,7 +160,7 @@ class ControlPanel(QGroupBox):
             b = QPushButton(txt)
             b.setMinimumSize(40, 40)
             b.clicked.connect(action)
-            b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
             grid.addWidget(b, *pos)
         layout.addLayout(grid)
         layout.addSpacing(10)
@@ -154,21 +169,28 @@ class ControlPanel(QGroupBox):
         btn_import = QPushButton("Importer CSV")
         btn_import.setMinimumHeight(40)
         btn_import.clicked.connect(self.app.import_csv)
-        btn_import.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn_import.setCursor(Qt.CursorShape.PointingHandCursor)
         layout.addWidget(btn_import)
         layout.addSpacing(10)
 
         # ---- ROTATION / RESET / EXPORT ----
-        for text, func in [
-            ("Rotation auto", self.toggle_rotation),
-            ("Réinitialiser vue", self.canvas.reset_view),
-            ("Exporter PNG", self.canvas.export_png)
-        ]:
-            btn = QPushButton(text)
-            btn.setMinimumHeight(35)
-            btn.clicked.connect(func)
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            layout.addWidget(btn)
+        btn_auto = QPushButton("Rotation auto")
+        btn_auto.setMinimumHeight(35)
+        btn_auto.clicked.connect(self.toggle_rotation)
+        btn_auto.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_auto)
+
+        btn_reset = QPushButton("Réinitialiser vue")
+        btn_reset.setMinimumHeight(35)
+        btn_reset.clicked.connect(self.canvas.reset_view)
+        btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_reset)
+
+        btn_export = QPushButton("Exporter PNG")
+        btn_export.setMinimumHeight(35)
+        btn_export.clicked.connect(self.canvas.export_png)
+        btn_export.setCursor(Qt.CursorShape.PointingHandCursor)
+        layout.addWidget(btn_export)
         layout.addSpacing(15)
 
         # ---- COLOREMAP ----
@@ -177,8 +199,18 @@ class ControlPanel(QGroupBox):
         cmap.addItems(["viridis", "plasma", "inferno", "cividis", "coolwarm"])
         cmap.currentTextChanged.connect(self.canvas.update_colormap)
         layout.addWidget(cmap)
+        layout.addSpacing(10)
+
+        # ---- ANALYSE DE LA QUALITE DE ROUTE ----
+        self.analysis_label = QLabel("Aucune donnée CSV")
+        self.analysis_label.setWordWrap(True)
+        self.analysis_label.setStyleSheet(
+            "background:#e0e0e0; border-radius:6px; padding:8px;"
+        )
+        layout.addWidget(self.analysis_label)
         layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
 
+    # ---- Méthodes rotation ----
     def toggle_rotation(self):
         self.rotating = not self.rotating
         if self.rotating:
@@ -195,7 +227,7 @@ class RoadQualityApp(QWidget):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Surveillance Qualité Route – 3D")
-        self.resize(1100, 700)
+        self.resize(1200, 700)
         self.canvas = Surface3DCanvas(np.zeros((8, 8)))
         self.watcher = None
 
@@ -209,8 +241,9 @@ class RoadQualityApp(QWidget):
         header.addStretch()
 
         main = QHBoxLayout()
+        self.control_panel = ControlPanel(self)
         main.addWidget(self.canvas, 3)
-        main.addWidget(ControlPanel(self), 1)
+        main.addWidget(self.control_panel, 1)
 
         layout = QVBoxLayout(self)
         layout.addLayout(header)
@@ -225,7 +258,8 @@ class RoadQualityApp(QWidget):
         self.canvas.update_surface(model.Z)
         if self.watcher:
             self.watcher.timer.stop()
-        self.watcher = CSVLiveWatcher(fname, self.canvas, self.status)
+        self.watcher = CSVLiveWatcher(fname, self.canvas, self.status, self.control_panel.analysis_label)
+        self.watcher.update_analysis(model.Z)
         self.status.setText(f"CSV chargé : {fname}")
         QMessageBox.information(self, "Import CSV", "Importation CSV réussie ✅")
 
