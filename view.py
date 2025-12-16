@@ -10,7 +10,6 @@ from PySide6.QtWidgets import (
     QPushButton, QComboBox, QGroupBox, QLabel, QFileDialog, QMessageBox, QSpacerItem, QSizePolicy
 )
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QCursor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
@@ -57,8 +56,9 @@ class Surface3DCanvas(FigureCanvasQTAgg):
         self.surf = self.ax.plot_surface(
             self.X, self.Y, self.Z,
             cmap=self.cmap,
-            edgecolor="black",
-            linewidth=0.3
+            edgecolor='none',
+            linewidth=0,
+            antialiased=True
         )
         self.ax.view_init(self.elev, self.azim)
         self.ax.set_box_aspect((1, 1, 0.4))
@@ -66,12 +66,9 @@ class Surface3DCanvas(FigureCanvasQTAgg):
         self.ax.set_yticks([])
         self.ax.set_zticks([])
         self.ax.set_title("Carte 3D – État de la route", pad=15, fontsize=12, weight="bold")
-        if hasattr(self, "cbar") and self.cbar is not None:
-            try:
-                self.cbar.remove()
-            except:
-                pass
-            self.cbar = None
+        if self.cbar:
+            try: self.cbar.remove()
+            except: pass
         self.cbar = self.figure.colorbar(self.surf, shrink=0.6, pad=0.08)
         self.cbar.set_label("Déformation")
         self.draw_idle()
@@ -112,7 +109,7 @@ class CSVLiveWatcher:
         self.last_mtime = os.path.getmtime(csv_path)
         self.timer = QTimer()
         self.timer.timeout.connect(self.check)
-        self.timer.start(500)
+        self.timer.start(300)
 
     def check(self):
         try:
@@ -158,15 +155,19 @@ class ControlPanel(QGroupBox):
         # ---- DIRECTION ----
         grid = QGridLayout()
         directions = [
-            ("↑", (0, 1), lambda: self.canvas.rotate(5, 0)),
-            ("←", (1, 0), lambda: self.canvas.rotate(0, -5)),
-            ("→", (1, 2), lambda: self.canvas.rotate(0, 5)),
-            ("↓", (2, 1), lambda: self.canvas.rotate(-5, 0)),
+            # ↑ Vue du dessus
+            ("↑", (0, 1), lambda: self.set_view(elev=90)),
+            # ← Vue profil gauche
+            ("←", (1, 0), lambda: self.set_view(elev=30, azim=self.canvas.azim - 15)),
+            # → Vue profil droite
+            ("→", (1, 2), lambda: self.set_view(elev=30, azim=self.canvas.azim + 15)),
+            # ↓ Vue dessous
+            ("↓", (2, 1), lambda: self.set_view(elev=0)),
         ]
         for txt, pos, action in directions:
             b = QPushButton(txt)
             b.setMinimumSize(40, 40)
-            b.clicked.connect(action)
+            b.clicked.connect(lambda checked, act=action: act())
             b.setCursor(Qt.CursorShape.PointingHandCursor)
             grid.addWidget(b, *pos)
         layout.addLayout(grid)
@@ -203,7 +204,7 @@ class ControlPanel(QGroupBox):
         # ---- COLOREMAP ----
         layout.addWidget(QLabel("Échelle de couleur"))
         cmap = QComboBox()
-        cmap.addItems(["viridis", "plasma", "inferno", "cividis", "coolwarm"])
+        cmap.addItems(["viridis", "cividis", "rocket", "mako", "turbo"])
         cmap.currentTextChanged.connect(self.canvas.update_colormap)
         layout.addWidget(cmap)
         layout.addSpacing(10)
@@ -212,10 +213,18 @@ class ControlPanel(QGroupBox):
         self.analysis_label = QLabel("Aucune donnée CSV")
         self.analysis_label.setWordWrap(True)
         self.analysis_label.setStyleSheet(
-            "background-color:#e0e0e0; color:#000000; border-radius:6px; padding:8px;"
+            "background-color:#ffffff; color:#000000; border-radius:6px; padding:8px;"
         )
         layout.addWidget(self.analysis_label)
         layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
+
+    def set_view(self, elev=None, azim=None):
+        if elev is not None:
+            self.canvas.elev = elev
+        if azim is not None:
+            self.canvas.azim = azim
+        self.canvas.ax.view_init(self.canvas.elev, self.canvas.azim)
+        self.canvas.draw_idle()
 
     # ---- Méthodes rotation ----
     def toggle_rotation(self):
@@ -227,7 +236,7 @@ class ControlPanel(QGroupBox):
         if not self.rotating:
             return
         self.canvas.rotate(d_azim=0.5)
-        QTimer.singleShot(100, self.rotate_step)
+        QTimer.singleShot(30, self.rotate_step)
 
 # ==================== APPLICATION PRINCIPALE ====================
 class RoadQualityApp(QWidget):
@@ -277,12 +286,12 @@ if __name__ == "__main__":
     app.setStyleSheet("""
     QWidget { background:#f4f6f8; font-family:Segoe UI; }
     QPushButton {
-        background:#1976d2; color:white; border-radius:6px; padding:8px;
-        font-weight:bold;
+        background:#1976d2; color:white; border-radius:8px; padding:8px;
+        font-weight:bold; font-size:13px;
     }
     QPushButton:hover { background:#1565c0; }
     QGroupBox { border:1px solid #cfd8dc; border-radius:8px; margin-top:10px; padding:10px; }
-    QComboBox { padding:4px; }
+    QComboBox { padding:4px; font-size:13px; }
     QLabel { font-size:12px; }
     """)
 
