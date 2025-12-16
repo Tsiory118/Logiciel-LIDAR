@@ -29,7 +29,8 @@ class RoadDataModel:
             if data.shape[0] < 8:
                 padding = np.zeros((8 - data.shape[0], data.shape[1]))
                 data = np.vstack([padding, data])
-            data = data[-8:, 1:9]  # ignorer timestamp, garder 8 colonnes
+            cols_to_take = min(data.shape[1] - 1, 8)
+            data = data[-8:, 1:1 + cols_to_take]
             if data.shape[1] < 8:
                 padding = np.zeros((8, 8 - data.shape[1]))
                 data = np.hstack([data, padding])
@@ -95,7 +96,9 @@ class Surface3DCanvas(FigureCanvasQTAgg):
         self.draw_surface()
 
     def export_png(self):
-        fname, _ = QFileDialog.getSaveFileName(self, "Exporter PNG", "route.png", "Images (*.png)")
+        fname, _ = QFileDialog.getSaveFileName(
+            self, "Exporter PNG", f"route_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.png", "Images (*.png)"
+        )
         if fname:
             self.figure.savefig(fname, dpi=300)
 
@@ -128,14 +131,18 @@ class CSVLiveWatcher:
         avg_val = np.round(np.mean(Z), 2)
         max_val = np.max(Z)
         min_val = np.min(Z)
+
         text = (
-            f"<b>Analyse de la qualité de la route :</b><br>"
-            f"- Déformation moyenne : {avg_val} mm<br>"
-            f"- Déformation max : {max_val} mm<br>"
-            f"- Déformation min : {min_val} mm<br>"
-            f"- Échelle : 1 unité = 1 cm²"
-        )
+            "<h3 style='color:black;'>Analyse de la qualité de la route</h3>"
+            "<hr style='border:1px solid #cfd8dc;'>"
+            "<p style='margin:4px 0; font-size:14px; color:black;'><b>Déformation moyenne :</b><br>{} mm</p>"
+            "<p style='margin:4px 0; font-size:14px; color:black;'><b>Déformation maximale :</b><br>{} mm</p>"
+            "<p style='margin:4px 0; font-size:14px; color:black;'><b>Déformation minimale :</b><br>{} mm</p>"
+            "<p style='margin:4px 0; font-size:13px; color:black;'><b>Échelle :</b><br>1 unité = 1 cm²</p>"
+        ).format(avg_val, max_val, min_val)
+
         self.analysis_label.setText(text)
+        self.analysis_label.setWordWrap(True)
 
 # ==================== PANNEAU DE CONTROLE ====================
 class ControlPanel(QGroupBox):
@@ -205,7 +212,7 @@ class ControlPanel(QGroupBox):
         self.analysis_label = QLabel("Aucune donnée CSV")
         self.analysis_label.setWordWrap(True)
         self.analysis_label.setStyleSheet(
-            "background:#e0e0e0; border-radius:6px; padding:8px;"
+            "background-color:#e0e0e0; color:#000000; border-radius:6px; padding:8px;"
         )
         layout.addWidget(self.analysis_label)
         layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
@@ -219,8 +226,8 @@ class ControlPanel(QGroupBox):
     def rotate_step(self):
         if not self.rotating:
             return
-        self.canvas.rotate(d_azim=1)
-        QTimer.singleShot(120, self.rotate_step)
+        self.canvas.rotate(d_azim=0.5)
+        QTimer.singleShot(100, self.rotate_step)
 
 # ==================== APPLICATION PRINCIPALE ====================
 class RoadQualityApp(QWidget):
