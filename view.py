@@ -215,12 +215,6 @@ class ControlPanel(QGroupBox):
         btn_export.setCursor(Qt.CursorShape.PointingHandCursor)  # <-- CURSEUR POINTEUR
         layout.addWidget(btn_export)
 
-        layout.addWidget(QLabel("Échelle de couleur"))
-        cmap = QComboBox()
-        cmap.addItems(["viridis", "cividis", "mako", "turbo"])
-        cmap.currentTextChanged.connect(self.canvas.update_colormap)
-        layout.addWidget(cmap)
-
         self.analysis_label = QLabel("Aucune donnée CSV")
         self.analysis_label.setStyleSheet(
             "background:#ffffff; color:#000; padding:8px; border-radius:6px;"
