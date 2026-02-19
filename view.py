@@ -314,7 +314,6 @@ class Dashboard(QWidget):
 # =========================================================
 # ====================== SPLASH ==========================
 # =========================================================
-
 class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
@@ -346,6 +345,7 @@ class SplashScreen(QWidget):
         subtitle.setStyleSheet("font-size:14px; color:#888;")
         subtitle.setAlignment(Qt.AlignCenter)
 
+        # Barre de progression
         self.progress_bg = QFrame()
         self.progress_bg.setFixedSize(400, 8)
         self.progress_bg.setStyleSheet("background:#2a2a2a; border-radius:4px;")
@@ -361,12 +361,23 @@ class SplashScreen(QWidget):
             border-radius:4px;
         """)
 
+        # 🔥 Label pourcentage
+        self.percent_label = QLabel("0%")
+        self.percent_label.setStyleSheet("""
+            font-size:16px;
+            font-weight:600;
+            color:#00e5ff;
+        """)
+        self.percent_label.setAlignment(Qt.AlignCenter)
+
         layout.addStretch()
         layout.addWidget(title)
         layout.addSpacing(15)
         layout.addWidget(subtitle)
         layout.addSpacing(60)
         layout.addWidget(self.progress_bg, alignment=Qt.AlignCenter)
+        layout.addSpacing(10)
+        layout.addWidget(self.percent_label)
         layout.addStretch()
 
         # Fade in
@@ -377,14 +388,23 @@ class SplashScreen(QWidget):
         self.fade_in.setEndValue(1)
         self.fade_in.start()
 
-        # Progress animation
+        # Animation barre
         self.anim = QPropertyAnimation(self.progress_bar, b"minimumWidth")
         self.anim.setDuration(3000)
         self.anim.setStartValue(0)
         self.anim.setEndValue(400)
         self.anim.setEasingCurve(QEasingCurve.InOutCubic)
+
+        # 🔥 Mise à jour du pourcentage pendant animation
+        self.anim.valueChanged.connect(self.update_percentage)
+
         self.anim.finished.connect(self.finish)
         self.anim.start()
+
+    # 🔥 Calcul du pourcentage
+    def update_percentage(self, value):
+        percent = int((value / 400) * 100)
+        self.percent_label.setText(f"{percent}%")
 
     def finish(self):
         self.fade_out = QPropertyAnimation(self, b"windowOpacity")
@@ -400,6 +420,7 @@ class SplashScreen(QWidget):
         self.main.setWindowTitle("K-Route Application <TBag & Meik>")
         self.main.resize(1500, 850)
         self.main.show()
+
 
 # =========================================================
 # ====================== DARK STYLE ======================
