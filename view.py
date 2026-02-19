@@ -274,16 +274,14 @@ class Dashboard(QWidget):
                 fontName='Helvetica',
                 fontSize=12,
                 leading=16,
-                textColor=colors.white,
-                backColor=colors.HexColor('#0f0f0f')
+                textColor=colors.black
             ))
             styles.add(ParagraphStyle(
                 name='MyTitle',
                 fontName='Helvetica-Bold',
                 fontSize=16,
                 leading=20,
-                textColor=colors.cyan,
-                backColor=colors.HexColor('#0f0f0f')
+                textColor=colors.blue
             ))
 
             # Titre
