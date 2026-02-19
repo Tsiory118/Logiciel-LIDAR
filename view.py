@@ -1,4 +1,6 @@
 import sys
+import io
+import re
 import numpy as np
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
@@ -9,10 +11,12 @@ from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.utils import ImageReader
 
 # =========================================================
-# ====================== MODEL ============================
+# ====================== MODEL ===========================
 # =========================================================
 
 class RoadDataModel:
@@ -29,13 +33,11 @@ class RoadDataModel:
         except Exception:
             return np.zeros((5, 5))
 
-
 # =========================================================
-# ====================== ANALYTICS ========================
+# ====================== ANALYTICS =======================
 # =========================================================
 
 class RoadAnalytics:
-
     @staticmethod
     def compute(Z):
         Z = Z[~np.isnan(Z)]
@@ -55,16 +57,14 @@ class RoadAnalytics:
 
         return avg, maxv, std, state, color
 
-
 # =========================================================
-# ====================== 3D VIEW ==========================
+# ====================== 3D VIEW =========================
 # =========================================================
 
 class Surface3D(FigureCanvasQTAgg):
     def __init__(self):
         fig = Figure(facecolor="#0f0f0f")
         super().__init__(fig)
-
         self.ax = fig.add_subplot(111, projection="3d")
         self.ax.set_facecolor("#0f0f0f")
 
@@ -75,10 +75,8 @@ class Surface3D(FigureCanvasQTAgg):
     def update_surface(self, Z):
         self.Z = Z
         self.ax.clear()
-
         rows, cols = Z.shape
         X, Y = np.meshgrid(range(cols), range(rows))
-
         self.ax.plot_surface(
             X, Y, Z,
             cmap="inferno",
@@ -86,7 +84,6 @@ class Surface3D(FigureCanvasQTAgg):
             antialiased=True,
             shade=True
         )
-
         self.ax.view_init(self.elev, self.azim)
         self.ax.set_xticks([])
         self.ax.set_yticks([])
@@ -113,9 +110,8 @@ class Surface3D(FigureCanvasQTAgg):
         self.azim = -60
         self.update_surface(self.Z)
 
-
 # =========================================================
-# ====================== DASHBOARD ========================
+# ====================== DASHBOARD =======================
 # =========================================================
 
 class Dashboard(QWidget):
@@ -210,7 +206,6 @@ class Dashboard(QWidget):
 
         model = RoadDataModel(fname)
         Z = model.Z
-
         self.surface3d.update_surface(Z)
 
         avg, maxv, std, state, color = RoadAnalytics.compute(Z)
@@ -238,9 +233,48 @@ class Dashboard(QWidget):
         self.surface3d.rotate_step()
 
     def export_report(self):
-        QMessageBox.information(self, "Rapport",
-                                "Module rapport prêt.")
+        fname, _ = QFileDialog.getSaveFileName(
+            self, "Enregistrer Rapport PDF", "", "PDF (*.pdf)"
+        )
+        if not fname:
+            return
+        if not fname.endswith(".pdf"):
+            fname += ".pdf"
 
+        try:
+            # Capturer le plan 3D
+            buf = io.BytesIO()
+            self.surface3d.figure.savefig(buf, format='png', facecolor=self.surface3d.figure.get_facecolor())
+            buf.seek(0)
+            img = ImageReader(buf)
+
+            # Récupérer le texte d'analyse
+            analysis_text = self.analytics_label.text()
+            analysis_text_clean = re.sub(r"<.*?>", "", analysis_text).replace("\n", " ")
+
+            # Créer le PDF
+            c = canvas.Canvas(fname, pagesize=A4)
+            width, height = A4
+
+            # Dessiner l'image 3D
+            img_width = width * 0.9
+            img_height = img_width * 0.6
+            c.drawImage(img, (width - img_width) / 2, height - img_height - 100, width=img_width, height=img_height)
+
+            # Ajouter texte d'analyse
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(50, height - img_height - 140, "Analyse Surface:")
+            c.setFont("Helvetica", 12)
+            text_y = height - img_height - 160
+            for line in analysis_text_clean.split("<br>"):
+                c.drawString(60, text_y, line.strip())
+                text_y -= 20
+
+            c.save()
+            QMessageBox.information(self, "Rapport", f"Rapport enregistré avec succès:\n{fname}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible de générer le PDF:\n{str(e)}")
 
 # =========================================================
 # ====================== SPLASH ===========================
@@ -249,7 +283,6 @@ class Dashboard(QWidget):
 class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
-
         self.setFixedSize(650, 380)
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
@@ -333,8 +366,6 @@ class SplashScreen(QWidget):
         self.main.resize(1500, 850)
         self.main.show()
 
-
-
 # =========================================================
 # ====================== DARK STYLE =======================
 # =========================================================
@@ -375,7 +406,6 @@ QPushButton:pressed {
     background-color: #3700b3;
 }
 """
-
 
 # =========================================================
 # ====================== MAIN =============================
