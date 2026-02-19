@@ -11,9 +11,12 @@ from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QColor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
-from reportlab.pdfgen import canvas
+
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.pagesizes import A4
-from reportlab.lib.utils import ImageReader
+from reportlab.lib.units import cm
+from reportlab.lib import colors
 
 # =========================================================
 # ====================== MODEL ===========================
@@ -40,22 +43,30 @@ class RoadDataModel:
 class RoadAnalytics:
     @staticmethod
     def compute(Z):
-        Z = Z[~np.isnan(Z)]
-        avg = np.mean(Z) / 10
-        maxv = np.max(Z) / 10
-        std = np.std(Z) / 10
+        Z_clean = Z[~np.isnan(Z)]
+        avg = np.mean(Z_clean) / 10  # cm
+        maxv = np.max(Z_clean) / 10
+        std = np.std(Z_clean) / 10
 
         if maxv < 1:
             state = "Bonne"
             color = "#00e676"
+            interpretation = "Surface homogène et conforme, peu d'irrégularités."
         elif maxv < 3:
             state = "Moyenne"
             color = "#ff9800"
+            interpretation = (
+                "Irrégularités modérées détectées. "
+                "Surveillance et entretien ponctuel recommandé."
+            )
         else:
             state = "Critique"
             color = "#ff1744"
-
-        return avg, maxv, std, state, color
+            interpretation = (
+                "Défauts critiques présents. "
+                "Planifier travaux de nivellement ou réparation ciblée."
+            )
+        return avg, maxv, std, state, color, interpretation
 
 # =========================================================
 # ====================== 3D VIEW =========================
@@ -67,7 +78,6 @@ class Surface3D(FigureCanvasQTAgg):
         super().__init__(fig)
         self.ax = fig.add_subplot(111, projection="3d")
         self.ax.set_facecolor("#0f0f0f")
-
         self.elev = 30
         self.azim = -60
         self.Z = np.zeros((5, 5))
@@ -208,14 +218,18 @@ class Dashboard(QWidget):
         Z = model.Z
         self.surface3d.update_surface(Z)
 
-        avg, maxv, std, state, color = RoadAnalytics.compute(Z)
+        avg, maxv, std, state, color, interpretation = RoadAnalytics.compute(Z)
 
         self.analytics_label.setText(
             f"""
-            Moyenne: {avg:.2f} cm<br>
-            Max: {maxv:.2f} cm<br>
-            Écart-type: {std:.2f} cm<br>
-            État: <span style='color:{color}'>{state}</span>
+            <b>Analyse de surface routière</b><br>
+            - Hauteur moyenne des irrégularités: {avg:.2f} cm<br>
+            - Déviation maximale détectée: {maxv:.2f} cm<br>
+            - Écart-type (uniformité): {std:.2f} cm<br>
+            - État général: <span style='color:{color}'>{state}</span><br>
+            <br>
+            <b>Interprétation :</b><br>
+            {interpretation}
             """
         )
 
@@ -242,42 +256,63 @@ class Dashboard(QWidget):
             fname += ".pdf"
 
         try:
-            # Capturer le plan 3D
+            # Capture image 3D
             buf = io.BytesIO()
             self.surface3d.figure.savefig(buf, format='png', facecolor=self.surface3d.figure.get_facecolor())
             buf.seek(0)
-            img = ImageReader(buf)
-
-            # Récupérer le texte d'analyse
-            analysis_text = self.analytics_label.text()
-            analysis_text_clean = re.sub(r"<.*?>", "", analysis_text).replace("\n", " ")
 
             # Créer le PDF
-            c = canvas.Canvas(fname, pagesize=A4)
-            width, height = A4
+            doc = SimpleDocTemplate(fname, pagesize=A4,
+                                    rightMargin=2*cm, leftMargin=2*cm,
+                                    topMargin=2*cm, bottomMargin=2*cm)
+            elements = []
 
-            # Dessiner l'image 3D
-            img_width = width * 0.9
-            img_height = img_width * 0.6
-            c.drawImage(img, (width - img_width) / 2, height - img_height - 100, width=img_width, height=img_height)
+            # Styles
+            styles = getSampleStyleSheet()
+            styles.add(ParagraphStyle(
+                name='AnalysisText',
+                fontName='Helvetica',
+                fontSize=12,
+                leading=16,
+                textColor=colors.white,
+                backColor=colors.HexColor('#0f0f0f')
+            ))
+            styles.add(ParagraphStyle(
+                name='MyTitle',
+                fontName='Helvetica-Bold',
+                fontSize=16,
+                leading=20,
+                textColor=colors.cyan,
+                backColor=colors.HexColor('#0f0f0f')
+            ))
 
-            # Ajouter texte d'analyse
-            c.setFont("Helvetica-Bold", 14)
-            c.drawString(50, height - img_height - 140, "Analyse Surface:")
-            c.setFont("Helvetica", 12)
-            text_y = height - img_height - 160
-            for line in analysis_text_clean.split("<br>"):
-                c.drawString(60, text_y, line.strip())
-                text_y -= 20
+            # Titre
+            elements.append(Paragraph("Analyse de Surface Routière", styles['MyTitle']))
+            elements.append(Spacer(1, 0.5*cm))
 
-            c.save()
+            # Image 3D
+            img = Image(buf)
+            img.drawHeight = 12*cm
+            img.drawWidth = 18*cm
+            elements.append(img)
+            elements.append(Spacer(1, 0.5*cm))
+
+            # Texte complet
+            analysis_text = self.analytics_label.text()
+            analysis_text = re.sub(r"<br\s*/?>", "\n", analysis_text)
+            analysis_text = re.sub(r"<.*?>", "", analysis_text)
+            elements.append(Paragraph(analysis_text, styles['AnalysisText']))
+
+            # Générer PDF
+            doc.build(elements)
+
             QMessageBox.information(self, "Rapport", f"Rapport enregistré avec succès:\n{fname}")
 
         except Exception as e:
             QMessageBox.critical(self, "Erreur", f"Impossible de générer le PDF:\n{str(e)}")
 
 # =========================================================
-# ====================== SPLASH ===========================
+# ====================== SPLASH ==========================
 # =========================================================
 
 class SplashScreen(QWidget):
@@ -367,7 +402,7 @@ class SplashScreen(QWidget):
         self.main.show()
 
 # =========================================================
-# ====================== DARK STYLE =======================
+# ====================== DARK STYLE ======================
 # =========================================================
 
 DARK_STYLE = """
@@ -408,7 +443,7 @@ QPushButton:pressed {
 """
 
 # =========================================================
-# ====================== MAIN =============================
+# ====================== MAIN ============================
 # =========================================================
 
 if __name__ == "__main__":
