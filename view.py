@@ -26,7 +26,7 @@ class RoadDataModel:
             if data.ndim == 1:
                 data = np.expand_dims(data, axis=0)
             return data[:, 1:]
-        except:
+        except Exception:
             return np.zeros((5, 5))
 
 
@@ -62,11 +62,11 @@ class RoadAnalytics:
 
 class Surface3D(FigureCanvasQTAgg):
     def __init__(self):
-        fig = Figure(facecolor="#121212")
+        fig = Figure(facecolor="#0f0f0f")
         super().__init__(fig)
 
         self.ax = fig.add_subplot(111, projection="3d")
-        self.ax.set_facecolor("#121212")
+        self.ax.set_facecolor("#0f0f0f")
 
         self.elev = 30
         self.azim = -60
@@ -95,7 +95,8 @@ class Surface3D(FigureCanvasQTAgg):
 
     def rotate_step(self):
         self.azim += 1
-        self.update_surface(self.Z)
+        self.ax.view_init(self.elev, self.azim)
+        self.draw_idle()
 
     def view_top(self):
         self.elev = 90
@@ -126,16 +127,28 @@ class Dashboard(QWidget):
         self.rotating = False
 
         main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
 
-        sidebar = QVBoxLayout()
-        sidebar.setAlignment(Qt.AlignTop)
+        # ================= SIDEBAR =================
+        sidebar_frame = QFrame()
+        sidebar_frame.setObjectName("Sidebar")
+        sidebar_frame.setFixedWidth(280)
 
-        self.btn_import = QPushButton("Importer CSV")
-        self.btn_rotate = QPushButton("Démarrer Rotation")
-        self.btn_default = QPushButton("Vue Isométrique")
-        self.btn_top = QPushButton("Vue Haut")
-        self.btn_profile = QPushButton("Vue Profil")
-        self.btn_report = QPushButton("Générer Rapport")
+        sidebar_layout = QVBoxLayout(sidebar_frame)
+        sidebar_layout.setContentsMargins(20, 20, 20, 20)
+        sidebar_layout.setSpacing(15)
+
+        title = QLabel("K-Route Dashboard")
+        title.setStyleSheet("font-size:18px; font-weight:600; color:#00e5ff;")
+        sidebar_layout.addWidget(title)
+        sidebar_layout.addSpacing(10)
+
+        self.btn_import = QPushButton("📂  Importer CSV")
+        self.btn_rotate = QPushButton("🔄  Rotation Auto")
+        self.btn_default = QPushButton("🧭  Vue Isométrique")
+        self.btn_top = QPushButton("⬆  Vue Haut")
+        self.btn_profile = QPushButton("➡  Vue Profil")
+        self.btn_report = QPushButton("📄  Générer Rapport")
 
         for btn in [
             self.btn_import,
@@ -146,21 +159,43 @@ class Dashboard(QWidget):
             self.btn_report
         ]:
             btn.setCursor(Qt.PointingHandCursor)
-            sidebar.addWidget(btn)
+            sidebar_layout.addWidget(btn)
+
+        sidebar_layout.addStretch()
+
+        # ================= ANALYTICS CARD =================
+        self.analytics_card = QFrame()
+        self.analytics_card.setObjectName("Card")
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(25)
+        shadow.setOffset(0, 0)
+        shadow.setColor(QColor(0, 229, 255, 60))
+        self.analytics_card.setGraphicsEffect(shadow)
+
+        card_layout = QVBoxLayout(self.analytics_card)
+        card_layout.setContentsMargins(15, 15, 15, 15)
+
+        analytics_title = QLabel("Analyse Surface")
+        analytics_title.setStyleSheet("font-size:16px; font-weight:bold; color:#00e5ff;")
 
         self.analytics_label = QLabel("Aucune donnée chargée")
-        self.analytics_label.setStyleSheet("padding:10px; font-size:13px;")
-        sidebar.addWidget(self.analytics_label)
+        self.analytics_label.setWordWrap(True)
+        self.analytics_label.setStyleSheet("font-size:13px; color:#cccccc;")
 
-        sidebar_frame = QFrame()
-        sidebar_frame.setLayout(sidebar)
-        sidebar_frame.setFixedWidth(260)
+        card_layout.addWidget(analytics_title)
+        card_layout.addSpacing(10)
+        card_layout.addWidget(self.analytics_label)
 
+        sidebar_layout.addWidget(self.analytics_card)
+
+        # ================= 3D VIEW =================
         self.surface3d = Surface3D()
 
         main_layout.addWidget(sidebar_frame)
         main_layout.addWidget(self.surface3d)
 
+        # ================= CONNECTIONS =================
         self.btn_import.clicked.connect(self.import_csv)
         self.btn_rotate.clicked.connect(self.toggle_rotation)
         self.btn_top.clicked.connect(self.surface3d.view_top)
@@ -182,7 +217,6 @@ class Dashboard(QWidget):
 
         self.analytics_label.setText(
             f"""
-            <b>Analyse</b><br>
             Moyenne: {avg:.2f} cm<br>
             Max: {maxv:.2f} cm<br>
             Écart-type: {std:.2f} cm<br>
@@ -192,12 +226,12 @@ class Dashboard(QWidget):
 
     def toggle_rotation(self):
         if not self.rotating:
-            self.rotation_timer.start(30)
-            self.btn_rotate.setText("Arrêter Rotation")
+            self.rotation_timer.start(16)
+            self.btn_rotate.setText("⏹  Stop Rotation")
             self.rotating = True
         else:
             self.rotation_timer.stop()
-            self.btn_rotate.setText("Démarrer Rotation")
+            self.btn_rotate.setText("🔄  Rotation Auto")
             self.rotating = False
 
     def rotate_surface(self):
@@ -205,11 +239,11 @@ class Dashboard(QWidget):
 
     def export_report(self):
         QMessageBox.information(self, "Rapport",
-                                "Module rapport prêt pour version commerciale.")
+                                "Module rapport prêt.")
 
 
 # =========================================================
-# ====================== SPLASH PREMIUM ===================
+# ====================== SPLASH ===========================
 # =========================================================
 
 class SplashScreen(QWidget):
@@ -300,27 +334,45 @@ class SplashScreen(QWidget):
         self.main.show()
 
 
+
 # =========================================================
 # ====================== DARK STYLE =======================
 # =========================================================
 
 DARK_STYLE = """
-QWidget { background:#121212; color:white; font-family:Segoe UI; }
-
-QPushButton {
-    background:#1e1e1e;
-    border:1px solid #333;
-    padding:10px;
-    border-radius:8px;
-    font-size:14px;
+QWidget {
+    background-color: #0f0f0f;
+    color: white;
+    font-family: Segoe UI;
 }
 
-QPushButton:hover { background:#2c2c2c; }
-QPushButton:pressed { background:#3700b3; }
+#Sidebar {
+    background-color: #141414;
+    border-right: 1px solid #2a2a2a;
+}
 
-QFrame {
-    background:#181818;
-    border-radius:12px;
+#Card {
+    background-color: #1c1c1c;
+    border-radius: 16px;
+    border: 1px solid #2a2a2a;
+}
+
+QPushButton {
+    background-color: #1e1e1e;
+    border: 1px solid #2f2f2f;
+    padding: 12px;
+    border-radius: 12px;
+    font-size: 14px;
+    text-align: left;
+}
+
+QPushButton:hover {
+    background-color: #252525;
+    border: 1px solid #00e5ff;
+}
+
+QPushButton:pressed {
+    background-color: #3700b3;
 }
 """
 
