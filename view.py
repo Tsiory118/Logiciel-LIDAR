@@ -154,7 +154,7 @@ class Dashboard(QWidget):
         self.btn_default = QPushButton("🧭  Vue Isométrique")
         self.btn_top = QPushButton("⬆  Vue Haut")
         self.btn_profile = QPushButton("➡  Vue Profil")
-        self.btn_report = QPushButton("📄  Générer Rapport")
+        self.btn_report = QPushButton("📄  Générer un rapport")
 
         for btn in [
             self.btn_import,
@@ -182,7 +182,7 @@ class Dashboard(QWidget):
         card_layout = QVBoxLayout(self.analytics_card)
         card_layout.setContentsMargins(15, 15, 15, 15)
 
-        analytics_title = QLabel("Interprétation")
+        analytics_title = QLabel("Analyse surface")
         analytics_title.setStyleSheet("font-size:16px; font-weight:bold; color:#00e5ff;")
 
         self.analytics_label = QLabel("Aucune donnée chargée")
