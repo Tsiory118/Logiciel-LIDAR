@@ -68,9 +68,9 @@ class RoadAnalytics:
             )
         return avg, maxv, std, state, color, interpretation
 
-# =========================================================
+# ========================================================
 # ====================== 3D VIEW =========================
-# =========================================================
+# ========================================================
 
 class Surface3D(FigureCanvasQTAgg):
     def __init__(self):
@@ -182,7 +182,7 @@ class Dashboard(QWidget):
         card_layout = QVBoxLayout(self.analytics_card)
         card_layout.setContentsMargins(15, 15, 15, 15)
 
-        analytics_title = QLabel("Analyse Surface")
+        analytics_title = QLabel("Interprétation")
         analytics_title.setStyleSheet("font-size:16px; font-weight:bold; color:#00e5ff;")
 
         self.analytics_label = QLabel("Aucune donnée chargée")
