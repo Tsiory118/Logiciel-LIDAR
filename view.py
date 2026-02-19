@@ -1,269 +1,172 @@
 import sys
-import os
 import numpy as np
-import matplotlib
-matplotlib.use("QtAgg")
-
-from datetime import datetime
 from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
-    QPushButton, QComboBox, QGroupBox, QLabel, QFileDialog,
-    QMessageBox, QSpacerItem, QSizePolicy
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QPushButton, QLabel, QFileDialog, QFrame,
+    QMessageBox, QGraphicsDropShadowEffect
 )
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QColor
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 
 
-# ==================== MODELE DE DONNEES ====================
+# =========================================================
+# ====================== MODEL ============================
+# =========================================================
+
 class RoadDataModel:
-    def __init__(self, csv_file: str):
-        self.csv_file = csv_file
-        self.Z = self._load_csv()
+    def __init__(self, path):
+        self.path = path
+        self.Z = self.load()
 
-    def _load_csv(self) -> np.ndarray:
+    def load(self):
         try:
-            data = np.genfromtxt(self.csv_file, delimiter=',', dtype=float)
-
+            data = np.genfromtxt(self.path, delimiter=",")
             if data.ndim == 1:
                 data = np.expand_dims(data, axis=0)
-
-            data = data[~np.isnan(data).all(axis=1)]
-
-            if data.shape[0] < 8:
-                padding = np.zeros((8 - data.shape[0], data.shape[1]))
-                data = np.vstack([padding, data])
-
-            cols_to_take = min(data.shape[1] - 1, 8)
-            data = data[-8:, 1:1 + cols_to_take]
-
-            if data.shape[1] < 8:
-                padding = np.zeros((8, 8 - data.shape[1]))
-                data = np.hstack([data, padding])
-
-            return data.astype(float)
-
-        except Exception as e:
-            print(f"Erreur CSV : {e}")
-            return np.zeros((8, 8))
+            return data[:, 1:]
+        except:
+            return np.zeros((5, 5))
 
 
-# ==================== CANVAS 3D ====================
-class Surface3DCanvas(FigureCanvasQTAgg):
-    def __init__(self, Z):
-        self.figure = Figure(dpi=100)
-        super().__init__(self.figure)
+# =========================================================
+# ====================== ANALYTICS ========================
+# =========================================================
 
-        self.ax = self.figure.add_subplot(111, projection="3d")
-        self.X, self.Y = np.meshgrid(range(8), range(8))
-        self.Z = Z
+class RoadAnalytics:
 
-        self.elev, self.azim = 30, -60
-        self.cmap = "viridis"
-        self.cbar = None
+    @staticmethod
+    def compute(Z):
+        Z = Z[~np.isnan(Z)]
+        avg = np.mean(Z) / 10
+        maxv = np.max(Z) / 10
+        std = np.std(Z) / 10
 
-        self.draw_surface()
+        if maxv < 1:
+            state = "Bonne"
+            color = "#00e676"
+        elif maxv < 3:
+            state = "Moyenne"
+            color = "#ff9800"
+        else:
+            state = "Critique"
+            color = "#ff1744"
 
-    def draw_surface(self):
-        self.ax.clear()
+        return avg, maxv, std, state, color
 
-        self.surf = self.ax.plot_surface(
-            self.X, self.Y, self.Z,
-            cmap=self.cmap,
-            edgecolor='none',
-            antialiased=True
-        )
 
-        self.ax.view_init(self.elev, self.azim)
-        self.ax.set_box_aspect((1, 1, 0.4))
-        self.ax.set_xticks([])
-        self.ax.set_yticks([])
-        self.ax.set_zticks([])
-        self.ax.set_title("Carte 3D – État de la route", fontsize=12, weight="bold", pad=15)
+# =========================================================
+# ====================== 3D VIEW ==========================
+# =========================================================
 
-        if self.cbar:
-            try:
-                self.cbar.remove()
-            except Exception:
-                pass
+class Surface3D(FigureCanvasQTAgg):
+    def __init__(self):
+        fig = Figure(facecolor="#121212")
+        super().__init__(fig)
 
-        self.cbar = self.figure.colorbar(self.surf, shrink=0.6, pad=0.08)
-        self.cbar.set_label("Déformation (cm)", fontsize=10)
+        self.ax = fig.add_subplot(111, projection="3d")
+        self.ax.set_facecolor("#121212")
 
-        self.draw_idle()
+        self.elev = 30
+        self.azim = -60
+        self.Z = np.zeros((5, 5))
 
     def update_surface(self, Z):
         self.Z = Z
-        self.draw_surface()
+        self.ax.clear()
 
-    def rotate(self, d_elev=0, d_azim=0):
-        self.elev += d_elev
-        self.azim += d_azim
-        self.ax.view_init(self.elev, self.azim)
-        self.draw_idle()
+        rows, cols = Z.shape
+        X, Y = np.meshgrid(range(cols), range(rows))
 
-    def reset_view(self):
-        self.elev, self.azim = 30, -60
-        self.ax.view_init(self.elev, self.azim)
-        self.draw_idle()
-
-    def update_colormap(self, cmap):
-        self.cmap = cmap
-        self.draw_surface()
-
-    def export_png(self):
-        fname, _ = QFileDialog.getSaveFileName(
-            self,
-            "Exporter PNG",
-            f"route_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png",
-            "Images (*.png)"
+        self.ax.plot_surface(
+            X, Y, Z,
+            cmap="inferno",
+            edgecolor="none",
+            antialiased=True,
+            shade=True
         )
-        if fname:
-            self.figure.savefig(fname, dpi=300)
 
-
-# ==================== CSV LIVE WATCHER ====================
-class CSVLiveWatcher:
-    def __init__(self, csv_path, canvas, status_label, analysis_label):
-        self.csv_path = csv_path
-        self.canvas = canvas
-        self.status_label = status_label
-        self.analysis_label = analysis_label
-        self.last_mtime = os.path.getmtime(csv_path)
-
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.check)
-        self.timer.start(300)
-
-    def check(self):
-        try:
-            mtime = os.path.getmtime(self.csv_path)
-            if mtime != self.last_mtime:
-                self.last_mtime = mtime
-                model = RoadDataModel(self.csv_path)
-                self.canvas.update_surface(model.Z)
-                self.update_analysis(model.Z)
-                self.status_label.setText(
-                    f"{self.csv_path} | Mise à jour : {datetime.now().strftime('%H:%M:%S')}"
-                )
-        except Exception as e:
-            self.status_label.setText(f"Erreur CSV : {e}")
-
-    def update_analysis(self, Z):
-        # Conversion mm → cm
-        avg_val = np.round(np.mean(Z) / 10, 2)
-        max_val = np.round(np.max(Z) / 10, 2)
-        min_val = np.round(np.min(Z) / 10, 2)
-
-        text = (
-            "<h3 style='color:black;'>Analyse de la qualité de la route</h3>"
-            "<hr>"
-            "<p><b>Déformation moyenne :</b><br>{} cm</p>"
-            "<p><b>Déformation maximale :</b><br>{} cm</p>"
-            "<p><b>Déformation minimale :</b><br>{} cm</p>"
-            "<p style='font-size:12px;'><b>Échelle :</b> 1 unité = 1 cm</p>"
-        ).format(avg_val, max_val, min_val)
-
-        self.analysis_label.setText(text)
-
-
-# ==================== PANNEAU DE CONTROLE ====================
-class ControlPanel(QGroupBox):
-    def __init__(self, app):
-        super().__init__("Contrôles")
-        self.app = app
-        self.canvas = app.canvas
-        self.rotating = False
-
-        layout = QVBoxLayout(self)
-        layout.setAlignment(Qt.AlignTop)
-
-        grid = QGridLayout()
-        buttons = [
-            ("↑", (0, 1), lambda: self.set_view(elev=90)),
-            ("←", (1, 0), lambda: self.set_view(azim=self.canvas.azim - 15)),
-            ("→", (1, 2), lambda: self.set_view(azim=self.canvas.azim + 15)),
-            ("↓", (2, 1), lambda: self.set_view(elev=0)),
-        ]
-
-        for txt, pos, action in buttons:
-            btn = QPushButton(txt)
-            btn.setMinimumSize(40, 40)
-            btn.clicked.connect(action)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)  # <-- CURSEUR POINTEUR
-            grid.addWidget(btn, *pos)
-
-        layout.addLayout(grid)
-
-        btn_import = QPushButton("Importer CSV")
-        btn_import.clicked.connect(self.app.import_csv)
-        btn_import.setCursor(Qt.CursorShape.PointingHandCursor)  # <-- CURSEUR POINTEUR
-        layout.addWidget(btn_import)
-
-        btn_auto = QPushButton("Rotation auto")
-        btn_auto.clicked.connect(self.toggle_rotation)
-        btn_auto.setCursor(Qt.CursorShape.PointingHandCursor)  # <-- CURSEUR POINTEUR
-        layout.addWidget(btn_auto)
-
-        btn_reset = QPushButton("Réinitialiser vue")
-        btn_reset.clicked.connect(self.canvas.reset_view)
-        btn_reset.setCursor(Qt.CursorShape.PointingHandCursor)  # <-- CURSEUR POINTEUR
-        layout.addWidget(btn_reset)
-
-        btn_export = QPushButton("Exporter PNG")
-        btn_export.clicked.connect(self.canvas.export_png)
-        btn_export.setCursor(Qt.CursorShape.PointingHandCursor)  # <-- CURSEUR POINTEUR
-        layout.addWidget(btn_export)
-
-        self.analysis_label = QLabel("Aucune donnée CSV")
-        self.analysis_label.setStyleSheet(
-            "background:#ffffff; color:#000; padding:8px; border-radius:6px;"
-        )
-        self.analysis_label.setWordWrap(True)
-
-        layout.addWidget(self.analysis_label)
-        layout.addItem(QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding))
-
-    def set_view(self, elev=None, azim=None):
-        if elev is not None:
-            self.canvas.elev = elev
-        if azim is not None:
-            self.canvas.azim = azim
-        self.canvas.ax.view_init(self.canvas.elev, self.canvas.azim)
-        self.canvas.draw_idle()
-
-    def toggle_rotation(self):
-        self.rotating = not self.rotating
-        if self.rotating:
-            self.rotate_step()
+        self.ax.view_init(self.elev, self.azim)
+        self.ax.set_xticks([])
+        self.ax.set_yticks([])
+        self.ax.set_zticks([])
+        self.draw_idle()
 
     def rotate_step(self):
-        if not self.rotating:
-            return
-        self.canvas.rotate(d_azim=0.5)
-        QTimer.singleShot(30, self.rotate_step)
+        self.azim += 1
+        self.update_surface(self.Z)
+
+    def view_top(self):
+        self.elev = 90
+        self.azim = -90
+        self.update_surface(self.Z)
+
+    def view_profile(self):
+        self.elev = 0
+        self.azim = -90
+        self.update_surface(self.Z)
+
+    def view_default(self):
+        self.elev = 30
+        self.azim = -60
+        self.update_surface(self.Z)
 
 
-# ==================== APPLICATION PRINCIPALE ====================
-class RoadQualityApp(QWidget):
+# =========================================================
+# ====================== DASHBOARD ========================
+# =========================================================
+
+class Dashboard(QWidget):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Surveillance de la qualité de Route")
-        self.resize(1200, 700)
 
-        self.canvas = Surface3DCanvas(np.zeros((8, 8)))
-        self.watcher = None
+        self.rotation_timer = QTimer()
+        self.rotation_timer.timeout.connect(self.rotate_surface)
+        self.rotating = False
 
-        self.status = QLabel("Aucun fichier CSV chargé")
+        main_layout = QHBoxLayout(self)
 
-        main = QHBoxLayout()
-        self.control_panel = ControlPanel(self)
-        main.addWidget(self.canvas, 3)
-        main.addWidget(self.control_panel, 1)
+        sidebar = QVBoxLayout()
+        sidebar.setAlignment(Qt.AlignTop)
 
-        layout = QVBoxLayout(self)
-        layout.addLayout(main)
-        layout.addWidget(self.status)
+        self.btn_import = QPushButton("Importer CSV")
+        self.btn_rotate = QPushButton("Démarrer Rotation")
+        self.btn_default = QPushButton("Vue Isométrique")
+        self.btn_top = QPushButton("Vue Haut")
+        self.btn_profile = QPushButton("Vue Profil")
+        self.btn_report = QPushButton("Générer Rapport")
+
+        for btn in [
+            self.btn_import,
+            self.btn_rotate,
+            self.btn_default,
+            self.btn_top,
+            self.btn_profile,
+            self.btn_report
+        ]:
+            btn.setCursor(Qt.PointingHandCursor)
+            sidebar.addWidget(btn)
+
+        self.analytics_label = QLabel("Aucune donnée chargée")
+        self.analytics_label.setStyleSheet("padding:10px; font-size:13px;")
+        sidebar.addWidget(self.analytics_label)
+
+        sidebar_frame = QFrame()
+        sidebar_frame.setLayout(sidebar)
+        sidebar_frame.setFixedWidth(260)
+
+        self.surface3d = Surface3D()
+
+        main_layout.addWidget(sidebar_frame)
+        main_layout.addWidget(self.surface3d)
+
+        self.btn_import.clicked.connect(self.import_csv)
+        self.btn_rotate.clicked.connect(self.toggle_rotation)
+        self.btn_top.clicked.connect(self.surface3d.view_top)
+        self.btn_profile.clicked.connect(self.surface3d.view_profile)
+        self.btn_default.clicked.connect(self.surface3d.view_default)
+        self.btn_report.clicked.connect(self.export_report)
 
     def import_csv(self):
         fname, _ = QFileDialog.getOpenFileName(self, "Importer CSV", "", "CSV (*.csv)")
@@ -271,34 +174,166 @@ class RoadQualityApp(QWidget):
             return
 
         model = RoadDataModel(fname)
-        self.canvas.update_surface(model.Z)
+        Z = model.Z
 
-        if self.watcher:
-            self.watcher.timer.stop()
+        self.surface3d.update_surface(Z)
 
-        self.watcher = CSVLiveWatcher(
-            fname, self.canvas, self.status, self.control_panel.analysis_label
+        avg, maxv, std, state, color = RoadAnalytics.compute(Z)
+
+        self.analytics_label.setText(
+            f"""
+            <b>Analyse</b><br>
+            Moyenne: {avg:.2f} cm<br>
+            Max: {maxv:.2f} cm<br>
+            Écart-type: {std:.2f} cm<br>
+            État: <span style='color:{color}'>{state}</span>
+            """
         )
-        self.watcher.update_analysis(model.Z)
 
-        self.status.setText(f"CSV chargé : {fname}")
-        QMessageBox.information(self, "Import CSV", "Importation réussie ✅")
+    def toggle_rotation(self):
+        if not self.rotating:
+            self.rotation_timer.start(30)
+            self.btn_rotate.setText("Arrêter Rotation")
+            self.rotating = True
+        else:
+            self.rotation_timer.stop()
+            self.btn_rotate.setText("Démarrer Rotation")
+            self.rotating = False
+
+    def rotate_surface(self):
+        self.surface3d.rotate_step()
+
+    def export_report(self):
+        QMessageBox.information(self, "Rapport",
+                                "Module rapport prêt pour version commerciale.")
 
 
-# ==================== MAIN ====================
+# =========================================================
+# ====================== SPLASH PREMIUM ===================
+# =========================================================
+
+class SplashScreen(QWidget):
+    def __init__(self):
+        super().__init__()
+
+        self.setFixedSize(650, 380)
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+
+        self.container = QFrame(self)
+        self.container.setGeometry(0, 0, 650, 380)
+        self.container.setStyleSheet("""
+            background-color: #121212;
+            border-radius: 20px;
+        """)
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 0)
+        shadow.setColor(QColor(0, 229, 255, 120))
+        self.container.setGraphicsEffect(shadow)
+
+        layout = QVBoxLayout(self.container)
+        layout.setAlignment(Qt.AlignCenter)
+
+        title = QLabel("K-Route Application")
+        title.setStyleSheet("font-size:32px; font-weight:700; color:#00e5ff;")
+        title.setAlignment(Qt.AlignCenter)
+
+        subtitle = QLabel("Surveiller la qualité de la route")
+        subtitle.setStyleSheet("font-size:14px; color:#888;")
+        subtitle.setAlignment(Qt.AlignCenter)
+
+        self.progress_bg = QFrame()
+        self.progress_bg.setFixedSize(400, 8)
+        self.progress_bg.setStyleSheet("background:#2a2a2a; border-radius:4px;")
+
+        self.progress_bar = QFrame(self.progress_bg)
+        self.progress_bar.setFixedSize(0, 8)
+        self.progress_bar.setStyleSheet("""
+            background:qlineargradient(
+                x1:0, y1:0, x2:1, y2:0,
+                stop:0 #00e5ff,
+                stop:1 #3700b3
+            );
+            border-radius:4px;
+        """)
+
+        layout.addStretch()
+        layout.addWidget(title)
+        layout.addSpacing(15)
+        layout.addWidget(subtitle)
+        layout.addSpacing(60)
+        layout.addWidget(self.progress_bg, alignment=Qt.AlignCenter)
+        layout.addStretch()
+
+        # Fade in
+        self.setWindowOpacity(0)
+        self.fade_in = QPropertyAnimation(self, b"windowOpacity")
+        self.fade_in.setDuration(800)
+        self.fade_in.setStartValue(0)
+        self.fade_in.setEndValue(1)
+        self.fade_in.start()
+
+        # Progress animation
+        self.anim = QPropertyAnimation(self.progress_bar, b"minimumWidth")
+        self.anim.setDuration(3000)
+        self.anim.setStartValue(0)
+        self.anim.setEndValue(400)
+        self.anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self.anim.finished.connect(self.finish)
+        self.anim.start()
+
+    def finish(self):
+        self.fade_out = QPropertyAnimation(self, b"windowOpacity")
+        self.fade_out.setDuration(500)
+        self.fade_out.setStartValue(1)
+        self.fade_out.setEndValue(0)
+        self.fade_out.finished.connect(self.launch_main)
+        self.fade_out.start()
+
+    def launch_main(self):
+        self.close()
+        self.main = Dashboard()
+        self.main.setWindowTitle("K-Route Application <TBag & Meik>")
+        self.main.resize(1500, 850)
+        self.main.show()
+
+
+# =========================================================
+# ====================== DARK STYLE =======================
+# =========================================================
+
+DARK_STYLE = """
+QWidget { background:#121212; color:white; font-family:Segoe UI; }
+
+QPushButton {
+    background:#1e1e1e;
+    border:1px solid #333;
+    padding:10px;
+    border-radius:8px;
+    font-size:14px;
+}
+
+QPushButton:hover { background:#2c2c2c; }
+QPushButton:pressed { background:#3700b3; }
+
+QFrame {
+    background:#181818;
+    border-radius:12px;
+}
+"""
+
+
+# =========================================================
+# ====================== MAIN =============================
+# =========================================================
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setStyleSheet(DARK_STYLE)
 
-    app.setStyleSheet("""
-        QWidget { background:#f4f6f8; font-family:Segoe UI; }
-        QPushButton {
-            background:#1976d2; color:white; border-radius:8px;
-            padding:8px; font-weight:bold;
-        }
-        QPushButton:hover { background:#1565c0; }
-        QGroupBox { border:1px solid #cfd8dc; border-radius:8px; }
-    """)
+    splash = SplashScreen()
+    splash.show()
 
-    window = RoadQualityApp()
-    window.show()
     sys.exit(app.exec())
