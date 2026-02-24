@@ -29,12 +29,19 @@ class RoadDataModel:
 
     def load(self):
         try:
-            data = np.genfromtxt(self.path, delimiter=",")
+            # Lire tout le CSV en ignorant la première ligne d'en-tête
+            data = np.genfromtxt(self.path, delimiter=",", skip_header=1)
+            
+            # Si le CSV ne contient qu'une seule ligne
             if data.ndim == 1:
                 data = np.expand_dims(data, axis=0)
-            return data[:, 1:]
-        except Exception:
-            return np.zeros((5, 5))
+            
+            # On prend uniquement les colonnes des cellules (à partir de la colonne 3)
+            # Cela correspond à data[:, 3:]
+            return data[:, 3:]
+        except Exception as e:
+            print("Erreur lors du chargement du CSV :", e)
+            return np.zeros((8, 16))  # matrice par défaut si problème
 
 # =========================================================
 # ====================== ANALYTICS =======================
