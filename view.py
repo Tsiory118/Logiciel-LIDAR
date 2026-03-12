@@ -151,7 +151,7 @@ class Dashboard(QWidget):
         sidebar_layout.setContentsMargins(20, 20, 20, 20)
         sidebar_layout.setSpacing(15)
 
-        title = QLabel("K-Route Dashboard")
+        title = QLabel("Dashboard")
         title.setStyleSheet("font-size:18px; font-weight:600; color:#00e5ff;")
         sidebar_layout.addWidget(title)
         sidebar_layout.addSpacing(10)
@@ -342,7 +342,7 @@ class SplashScreen(QWidget):
         layout = QVBoxLayout(self.container)
         layout.setAlignment(Qt.AlignCenter)
 
-        title = QLabel("K-Route Application")
+        title = QLabel("RouBot Application")
         title.setStyleSheet("font-size:32px; font-weight:700; color:#00e5ff;")
         title.setAlignment(Qt.AlignCenter)
 
@@ -422,7 +422,7 @@ class SplashScreen(QWidget):
     def launch_main(self):
         self.close()
         self.main = Dashboard()
-        self.main.setWindowTitle("K-Route Application <TBag & Meik>")
+        self.main.setWindowTitle("RouBot Application <TBag & Meik>")
         self.main.resize(1500, 850)
         self.main.show()
 
