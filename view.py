@@ -156,7 +156,7 @@ class Dashboard(QWidget):
         sidebar_layout.addWidget(title)
         sidebar_layout.addSpacing(10)
 
-        self.btn_import = QPushButton("📂  Importer CSV")
+        self.btn_import = QPushButton("📂  Importer un fichier CSV")
         self.btn_rotate = QPushButton("🔄  Rotation Auto")
         self.btn_default = QPushButton("🧭  Vue Isométrique")
         self.btn_top = QPushButton("⬆  Vue Haut")
@@ -189,7 +189,7 @@ class Dashboard(QWidget):
         card_layout = QVBoxLayout(self.analytics_card)
         card_layout.setContentsMargins(15, 15, 15, 15)
 
-        analytics_title = QLabel("Analyse surface")
+        analytics_title = QLabel("Interprétation")
         analytics_title.setStyleSheet("font-size:16px; font-weight:bold; color:#00e5ff;")
 
         self.analytics_label = QLabel("Aucune donnée chargée")
@@ -233,10 +233,6 @@ class Dashboard(QWidget):
             - Hauteur moyenne des irrégularités: {avg:.2f} cm<br>
             - Déviation maximale détectée: {maxv:.2f} cm<br>
             - Écart-type (uniformité): {std:.2f} cm<br>
-            - État général: <span style='color:{color}'>{state}</span><br>
-            <br>
-            <b>Interprétation :</b><br>
-            {interpretation}
             """
         )
 
