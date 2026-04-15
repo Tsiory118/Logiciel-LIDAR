@@ -51,28 +51,24 @@ class RoadAnalytics:
     @staticmethod
     def compute(Z):
         Z_clean = Z[~np.isnan(Z)]
-        avg = np.mean(Z_clean) / 10  # cm
+
+        avg = np.mean(Z_clean) / 10
         maxv = np.max(Z_clean) / 10
         std = np.std(Z_clean) / 10
 
         if maxv < 1:
             state = "Bonne"
             color = "#00e676"
-            interpretation = "Surface homogène et conforme, peu d'irrégularités."
+            interpretation = "Surface homogène et conforme."
         elif maxv < 3:
             state = "Moyenne"
             color = "#ff9800"
-            interpretation = (
-                "Irrégularités modérées détectées. "
-                "Surveillance et entretien ponctuel recommandé."
-            )
+            interpretation = "Irrégularités modérées."
         else:
             state = "Critique"
             color = "#ff1744"
-            interpretation = (
-                "Défauts critiques présents. "
-                "Planifier travaux de nivellement ou réparation ciblée."
-            )
+            interpretation = "Défauts critiques."
+
         return avg, maxv, std, state, color, interpretation
 
 # ========================================================
@@ -217,7 +213,7 @@ class Dashboard(QWidget):
         self.btn_report.clicked.connect(self.export_report)
 
     def import_csv(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "Importer CSV", "", "CSV (*.csv)")
+        fname, _ = QFileDialog.getOpenFileName(self, "CSV", "", "CSV (*.csv)")
         if not fname:
             return
 
@@ -227,14 +223,20 @@ class Dashboard(QWidget):
 
         avg, maxv, std, state, color, interpretation = RoadAnalytics.compute(Z)
 
-        self.analytics_label.setText(
-            f"""
-            <b>Analyse de surface routière</b><br>
-            - Hauteur moyenne des irrégularités: {avg:.2f} cm<br>
-            - Déviation maximale détectée: {maxv:.2f} cm<br>
-            - Écart-type (uniformité): {std:.2f} cm<br>
-            """
-        )
+        # LONGUEUR ROUTE
+        nb_lignes = Z.shape[0]
+        longueur_m = (nb_lignes / 8 * 25) / 100
+
+        self.analytics_label.setText(f"""
+        <b>Analyse de surface routière</b><br>
+        - Route mesurée: {longueur_m:.2f} m<br>
+        - Moyenne: {avg:.2f} cm<br>
+        - Max: {maxv:.2f} cm<br>
+        - Écart-type: {std:.2f} cm<br><br>
+
+        <b>État:</b> {state}<br>
+        {interpretation}
+        """)
 
     def toggle_rotation(self):
         if not self.rotating:
