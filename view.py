@@ -1,480 +1,1117 @@
+"""
+RouBot Application — Road Surface Quality Analyzer
+Mémoire d'ingénieur en Informatique
+
+Architecture : MVC (Model-View-Controller)
+Thème        : Light Mode — Professionnel
+"""
+
 import sys
-import io
-import re
 import numpy as np
+from datetime import datetime
+
 from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFileDialog, QFrame,
-    QMessageBox, QGraphicsDropShadowEffect
+    QGraphicsDropShadowEffect, QSizePolicy, QScrollArea,
+    QProgressBar, QStatusBar, QMainWindow, QToolBar,
+    QSplitter, QGridLayout, QGroupBox, QTabWidget,
+    QTableWidget, QTableWidgetItem, QHeaderView,
+    QMessageBox, QSpacerItem
 )
-from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
-from PySide6.QtGui import QColor
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
-from matplotlib.figure import Figure
+from PySide6.QtCore import (
+    Qt, QTimer, QPropertyAnimation, QEasingCurve,
+    QSequentialAnimationGroup, QParallelAnimationGroup, QRect
+)
+from PySide6.QtGui import (
+    QColor, QFont, QPixmap, QPalette, QIcon, QLinearGradient,
+    QPainter, QBrush, QPen, QFontDatabase
+)
 
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm
-from reportlab.lib import colors
+from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
+from matplotlib.figure import Figure
+import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from matplotlib.colors import LinearSegmentedColormap
+
+
+# =========================================================
+# ====================== CONSTANTS =======================
+# =========================================================
+
+APP_NAME    = "RouBot Analyzer"
+APP_VERSION = "2.0.0"
+APP_AUTHOR  = "TBag & Meik"
+
+PALETTE = {
+    "bg_primary"   : "#F8FAFC",
+    "bg_secondary" : "#FFFFFF",
+    "bg_card"      : "#FFFFFF",
+    "sidebar_bg"   : "#1E293B",
+    "sidebar_text" : "#94A3B8",
+    "sidebar_hover": "#334155",
+    "accent_blue"  : "#2563EB",
+    "accent_cyan"  : "#0EA5E9",
+    "accent_green" : "#10B981",
+    "accent_orange": "#F59E0B",
+    "accent_red"   : "#EF4444",
+    "text_primary" : "#0F172A",
+    "text_secondary": "#475569",
+    "text_muted"   : "#94A3B8",
+    "border"       : "#E2E8F0",
+    "border_focus" : "#2563EB",
+    "shadow"       : "rgba(15,23,42,0.08)",
+}
+
+APP_STYLE = """
+/* ── Global ──────────────────────────────────────── */
+QApplication, QMainWindow {
+    background-color: #F8FAFC;
+}
+
+QWidget {
+    font-family: "Segoe UI", "SF Pro Display", sans-serif;
+    font-size: 13px;
+    color: #0F172A;
+}
+
+QMainWindow {
+    background-color: #F8FAFC;
+}
+
+/* ── Scrollbar ───────────────────────────────────── */
+QScrollBar:vertical {
+    background: #F1F5F9;
+    width: 6px;
+    border-radius: 3px;
+}
+QScrollBar::handle:vertical {
+    background: #CBD5E1;
+    border-radius: 3px;
+    min-height: 30px;
+}
+QScrollBar::handle:vertical:hover { background: #94A3B8; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }
+
+/* ── Sidebar ─────────────────────────────────────── */
+#Sidebar {
+    background-color: #1E293B;
+    border-right: 1px solid #334155;
+}
+
+/* ── Cards ───────────────────────────────────────── */
+#MetricCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 12px;
+}
+
+#SectionCard {
+    background-color: #FFFFFF;
+    border: 1px solid #E2E8F0;
+    border-radius: 16px;
+}
+
+/* ── Nav Buttons ─────────────────────────────────── */
+#NavBtn {
+    background-color: transparent;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    text-align: left;
+    color: #94A3B8;
+    font-size: 13px;
+    font-weight: 500;
+}
+#NavBtn:hover {
+    background-color: #334155;
+    color: #F1F5F9;
+}
+#NavBtn[active="true"] {
+    background-color: #2563EB;
+    color: #FFFFFF;
+}
+
+/* ── Primary Button ──────────────────────────────── */
+#PrimaryBtn {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 20px;
+    font-size: 13px;
+    font-weight: 600;
+}
+#PrimaryBtn:hover  { background-color: #1D4ED8; }
+#PrimaryBtn:pressed { background-color: #1E40AF; }
+
+/* ── Secondary Button ────────────────────────────── */
+#SecondaryBtn {
+    background-color: #F1F5F9;
+    color: #0F172A;
+    border: 1px solid #E2E8F0;
+    border-radius: 8px;
+    padding: 9px 18px;
+    font-size: 13px;
+    font-weight: 500;
+}
+#SecondaryBtn:hover  { background-color: #E2E8F0; border-color: #CBD5E1; }
+#SecondaryBtn:pressed { background-color: #CBD5E1; }
+
+/* ── Status Badge ────────────────────────────────── */
+#BadgeGood    { background:#DCFCE7; color:#166534; border-radius:6px; padding:2px 10px; font-weight:600; }
+#BadgeWarning { background:#FEF3C7; color:#92400E; border-radius:6px; padding:2px 10px; font-weight:600; }
+#BadgeCritical{ background:#FEE2E2; color:#991B1B; border-radius:6px; padding:2px 10px; font-weight:600; }
+
+/* ── Tab Widget ──────────────────────────────────── */
+QTabWidget::pane {
+    border: 1px solid #E2E8F0;
+    border-radius: 0 12px 12px 12px;
+    background: #FFFFFF;
+}
+QTabBar::tab {
+    background: #F1F5F9;
+    border: 1px solid #E2E8F0;
+    border-bottom: none;
+    padding: 8px 20px;
+    border-radius: 8px 8px 0 0;
+    color: #64748B;
+    font-weight: 500;
+}
+QTabBar::tab:selected { background: #FFFFFF; color: #2563EB; font-weight: 600; }
+QTabBar::tab:hover:!selected { background: #E2E8F0; }
+
+/* ── Table ───────────────────────────────────────── */
+QTableWidget {
+    background: #FFFFFF;
+    gridline-color: #E2E8F0;
+    border: none;
+    border-radius: 8px;
+}
+QTableWidget::item { padding: 8px 12px; }
+QTableWidget::item:selected { background: #EFF6FF; color: #1E40AF; }
+QHeaderView::section {
+    background: #F8FAFC;
+    border: none;
+    border-bottom: 2px solid #E2E8F0;
+    padding: 10px 12px;
+    font-weight: 600;
+    color: #475569;
+}
+
+/* ── Progress Bar ────────────────────────────────── */
+QProgressBar {
+    background: #E2E8F0;
+    border-radius: 6px;
+    height: 8px;
+    text-align: center;
+    font-size: 11px;
+}
+QProgressBar::chunk {
+    background: qlineargradient(x1:0,y1:0,x2:1,y2:0, stop:0 #2563EB, stop:1 #0EA5E9);
+    border-radius: 6px;
+}
+
+/* ── Status Bar ──────────────────────────────────── */
+QStatusBar {
+    background: #FFFFFF;
+    border-top: 1px solid #E2E8F0;
+    color: #64748B;
+    font-size: 12px;
+}
+"""
+
 
 # =========================================================
 # ====================== MODEL ===========================
 # =========================================================
 
 class RoadDataModel:
-    def __init__(self, path):
-        self.path = path
-        self.Z = self.load()
+    """Charge et normalise les données CSV du capteur routier."""
 
-    def load(self):
+    def __init__(self, path: str):
+        self.path      = path
+        self.filename  = path.split("/")[-1].split("\\")[-1]
+        self.load_time = datetime.now().strftime("%d/%m/%Y  %H:%M:%S")
+        self.Z, self.raw_rows, self.raw_cols = self._load()
+
+    def _load(self):
         try:
-            # Lire tout le CSV en ignorant la première ligne d'en-tête
             data = np.genfromtxt(self.path, delimiter=",", skip_header=1)
-            
-            # Si le CSV ne contient qu'une seule ligne
             if data.ndim == 1:
                 data = np.expand_dims(data, axis=0)
-            
-            # On prend uniquement les colonnes des cellules (à partir de la colonne 3)
-            # Cela correspond à data[:, 3:]
-            return data[:, 3:]
+            Z = data[:, 3:].astype(float)
+            return Z, data.shape[0], Z.shape[1]
         except Exception as e:
-            print("Erreur lors du chargement du CSV :", e)
-            return np.zeros((8, 16))  # matrice par défaut si problème
+            print(f"[RoadDataModel] Erreur chargement : {e}")
+            return np.zeros((8, 16)), 0, 0
+
 
 # =========================================================
 # ====================== ANALYTICS =======================
 # =========================================================
 
 class RoadAnalytics:
-    @staticmethod
-    def compute(Z):
+    """Calcule tous les indicateurs de qualité de surface."""
+
+    # Seuils IRI (International Roughness Index) simplifiés
+    SEUIL_BON      = 1.0   # < 1 cm → Bon
+    SEUIL_MOYEN    = 3.0   # < 3 cm → Moyen
+    SAMPLE_RATE    = 8     # capteurs / mètre
+    SENSOR_SPACING = 0.125 # mètres entre capteurs
+
+    @classmethod
+    def compute(cls, Z: np.ndarray) -> dict:
         Z_clean = Z[~np.isnan(Z)]
+        if Z_clean.size == 0:
+            return {}
 
-        avg = np.mean(Z_clean) / 10
-        maxv = np.max(Z_clean) / 10
-        std = np.std(Z_clean) / 10
+        # -- Métriques de base (en cm) --
+        avg    = float(np.mean(Z_clean)) / 10
+        maxv   = float(np.max(Z_clean))  / 10
+        minv   = float(np.min(Z_clean))  / 10
+        std    = float(np.std(Z_clean))  / 10
+        median = float(np.median(Z_clean)) / 10
 
-        if maxv < 1:
-            state = "Bonne"
-            color = "#00e676"
-            interpretation = "Surface homogène et conforme."
-        elif maxv < 3:
-            state = "Moyenne"
-            color = "#ff9800"
-            interpretation = "Irrégularités modérées."
+        # -- Surface & rugosité --
+        rugosite  = float(np.std(Z))
+        variation = float(np.max(Z) - np.min(Z))
+
+        # -- Obstacles (dépassement 2σ) --
+        threshold    = np.mean(Z) + 2 * np.std(Z)
+        nb_obstacles = int(np.count_nonzero(Z > threshold))
+
+        # -- Profil longitudinal & pente --
+        profil_long = np.mean(Z, axis=1)
+        if len(profil_long) > 1:
+            coeffs = np.polyfit(range(len(profil_long)), profil_long, 1)
+            pente  = float(coeffs[0])
         else:
-            state = "Critique"
-            color = "#ff1744"
-            interpretation = "Défauts critiques."
+            pente = 0.0
 
-        return avg, maxv, std, state, color, interpretation
+        # -- Longueur estimée --
+        nb_lignes  = Z.shape[0]
+        longueur_m = float((nb_lignes / cls.SAMPLE_RATE) * cls.SENSOR_SPACING * 8)
 
-# ========================================================
-# ====================== 3D VIEW =========================
-# ========================================================
+        # -- Profil transversal --
+        profil_transv = np.mean(Z, axis=0)
 
-class Surface3D(FigureCanvasQTAgg):
+        # -- État global --
+        if maxv < cls.SEUIL_BON:
+            state          = "Bonne"
+            badge          = "Good"
+            color          = "#10B981"
+            interpretation = "Surface homogène, conforme aux normes routières."
+            iri_score      = "IRI < 1  —  Très bon état"
+        elif maxv < cls.SEUIL_MOYEN:
+            state          = "Moyenne"
+            badge          = "Warning"
+            color          = "#F59E0B"
+            interpretation = "Irrégularités modérées, surveillance recommandée."
+            iri_score      = "IRI 1–3  —  État acceptable"
+        else:
+            state          = "Critique"
+            badge          = "Critical"
+            color          = "#EF4444"
+            interpretation = "Défauts critiques, intervention urgente requise."
+            iri_score      = "IRI > 3  —  Mauvais état"
+
+        # -- Score qualité 0-100 --
+        quality_score = max(0, min(100, int(100 - (maxv / 6) * 100)))
+
+        return {
+            "avg": avg, "maxv": maxv, "minv": minv, "std": std, "median": median,
+            "rugosite": rugosite, "variation": variation,
+            "nb_obstacles": nb_obstacles, "pente": pente,
+            "longueur_m": longueur_m,
+            "profil_long": profil_long, "profil_transv": profil_transv,
+            "state": state, "badge": badge, "color": color,
+            "interpretation": interpretation, "iri_score": iri_score,
+            "quality_score": quality_score,
+            "Z": Z,
+        }
+
+
+# =========================================================
+# ====================== WIDGETS HELPERS =================
+# =========================================================
+
+def make_shadow(blur=20, offset_y=4, opacity=30):
+    shadow = QGraphicsDropShadowEffect()
+    shadow.setBlurRadius(blur)
+    shadow.setOffset(0, offset_y)
+    shadow.setColor(QColor(15, 23, 42, opacity))
+    return shadow
+
+
+def h_separator():
+    line = QFrame()
+    line.setFrameShape(QFrame.HLine)
+    line.setStyleSheet("color: #334155;")
+    return line
+
+
+class MetricCard(QFrame):
+    """Carte indicateur KPI (valeur + label + sous-texte)."""
+
+    def __init__(self, title: str, value: str = "—", unit: str = "",
+                 sub: str = "", accent: str = "#2563EB", parent=None):
+        super().__init__(parent)
+        self.setObjectName("MetricCard")
+        self.setGraphicsEffect(make_shadow(16, 3, 20))
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(4)
+
+        # Titre
+        lbl_title = QLabel(title.upper())
+        lbl_title.setStyleSheet(
+            f"font-size:10px; font-weight:700; color:#94A3B8; letter-spacing:1px;"
+        )
+
+        # Valeur + unité
+        row = QHBoxLayout()
+        self.lbl_value = QLabel(value)
+        self.lbl_value.setStyleSheet(
+            f"font-size:26px; font-weight:700; color:{accent};"
+        )
+        lbl_unit = QLabel(unit)
+        lbl_unit.setStyleSheet("font-size:13px; color:#64748B; margin-top:10px;")
+        row.addWidget(self.lbl_value)
+        row.addWidget(lbl_unit)
+        row.addStretch()
+
+        # Sous-texte
+        self.lbl_sub = QLabel(sub)
+        self.lbl_sub.setStyleSheet("font-size:11px; color:#94A3B8;")
+
+        layout.addWidget(lbl_title)
+        layout.addLayout(row)
+        layout.addWidget(self.lbl_sub)
+
+    def update(self, value: str, sub: str = ""):
+        self.lbl_value.setText(value)
+        self.lbl_sub.setText(sub)
+
+
+class SidebarNavBtn(QPushButton):
+    def __init__(self, icon: str, label: str, parent=None):
+        super().__init__(f"  {icon}   {label}", parent)
+        self.setObjectName("NavBtn")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumHeight(44)
+        self.setCheckable(False)
+
+
+# =========================================================
+# ====================== 3D SURFACE ======================
+# =========================================================
+
+class Surface3DCanvas(FigureCanvasQTAgg):
+    """Canvas Matplotlib pour la visualisation 3D de la surface routière."""
+
+    CMAP = LinearSegmentedColormap.from_list(
+        "road", ["#1D4ED8", "#0EA5E9", "#10B981", "#F59E0B", "#EF4444"]
+    )
+
     def __init__(self):
-        fig = Figure(facecolor="#0f0f0f")
-        super().__init__(fig)
-        self.ax = fig.add_subplot(111, projection="3d")
-        self.ax.set_facecolor("#0f0f0f")
+        self.fig = Figure(facecolor="#FFFFFF", tight_layout=True)
+        super().__init__(self.fig)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.ax   = self.fig.add_subplot(111, projection="3d")
         self.elev = 30
         self.azim = -60
-        self.Z = np.zeros((5, 5))
+        self.Z    = np.zeros((8, 16))
+        self._style_axes()
+        self._draw_placeholder()
 
-    def update_surface(self, Z):
+    def _style_axes(self):
+        self.ax.set_facecolor("#F8FAFC")
+        self.fig.patch.set_facecolor("#FFFFFF")
+        for spine in [self.ax.xaxis, self.ax.yaxis, self.ax.zaxis]:
+            spine.line.set_color("#E2E8F0")
+        self.ax.tick_params(colors="#94A3B8", labelsize=8)
+        self.ax.xaxis.label.set_color("#64748B")
+        self.ax.yaxis.label.set_color("#64748B")
+        self.ax.zaxis.label.set_color("#64748B")
+
+    def _draw_placeholder(self):
+        self.ax.clear()
+        X, Y = np.meshgrid(range(16), range(8))
+        Z = np.zeros((8, 16))
+        self.ax.plot_surface(X, Y, Z, color="#E2E8F0", edgecolor="none", alpha=0.5)
+        self.ax.set_title("Importer un fichier CSV pour visualiser", fontsize=11,
+                          color="#94A3B8", pad=10)
+        self._style_axes()
+        self.ax.set_xticks([]); self.ax.set_yticks([]); self.ax.set_zticks([])
+        self.draw_idle()
+
+    def update_surface(self, Z: np.ndarray):
         self.Z = Z
         self.ax.clear()
         rows, cols = Z.shape
         X, Y = np.meshgrid(range(cols), range(rows))
-        self.ax.plot_surface(
+
+        surf = self.ax.plot_surface(
             X, Y, Z,
-            cmap="inferno",
+            cmap=self.CMAP,
             edgecolor="none",
             antialiased=True,
-            shade=True
+            shade=True,
+            alpha=0.95
         )
+        self.fig.colorbar(surf, ax=self.ax, shrink=0.5, aspect=10,
+                          label="Hauteur (mm)", pad=0.1)
+
+        self._style_axes()
+        self.ax.set_xlabel("Largeur (capteurs)", labelpad=8, fontsize=9)
+        self.ax.set_ylabel("Longueur (points)", labelpad=8, fontsize=9)
+        self.ax.set_zlabel("Hauteur (mm)", labelpad=8, fontsize=9)
+        self.ax.set_title("Modèle surfacique 3D", fontsize=12,
+                          fontweight="bold", color="#1E293B", pad=12)
         self.ax.view_init(self.elev, self.azim)
-        self.ax.set_xticks([])
-        self.ax.set_yticks([])
-        self.ax.set_zticks([])
+        self.ax.grid(True, color="#E2E8F0", alpha=0.6)
         self.draw_idle()
 
     def rotate_step(self):
-        self.azim += 1
+        self.azim = (self.azim + 1) % 360
         self.ax.view_init(self.elev, self.azim)
         self.draw_idle()
 
     def view_top(self):
-        self.elev = 90
-        self.azim = -90
-        self.update_surface(self.Z)
+        self.elev, self.azim = 90, -90
+        self.ax.view_init(self.elev, self.azim)
+        self.draw_idle()
 
     def view_profile(self):
-        self.elev = 0
-        self.azim = -90
-        self.update_surface(self.Z)
+        self.elev, self.azim = 0, -90
+        self.ax.view_init(self.elev, self.azim)
+        self.draw_idle()
 
     def view_default(self):
-        self.elev = 30
-        self.azim = -60
-        self.update_surface(self.Z)
+        self.elev, self.azim = 30, -60
+        self.ax.view_init(self.elev, self.azim)
+        self.draw_idle()
+
 
 # =========================================================
-# ====================== DASHBOARD =======================
+# ====================== CHARTS PANEL ====================
 # =========================================================
 
-class Dashboard(QWidget):
+class ChartsPanel(FigureCanvasQTAgg):
+    """Panel d'analyse multi-graphiques (profils + heatmap + histogramme)."""
+
+    def __init__(self):
+        self.fig = Figure(facecolor="#FFFFFF", tight_layout=True)
+        super().__init__(self.fig)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._draw_empty()
+
+    def _draw_empty(self):
+        self.fig.clear()
+        ax = self.fig.add_subplot(111)
+        ax.set_facecolor("#F8FAFC")
+        ax.text(0.5, 0.5, "Aucune donnée chargée",
+                ha="center", va="center", color="#94A3B8", fontsize=12,
+                transform=ax.transAxes)
+        ax.set_xticks([]); ax.set_yticks([])
+        for sp in ax.spines.values(): sp.set_color("#E2E8F0")
+        self.draw_idle()
+
+    def update_charts(self, stats: dict):
+        self.fig.clear()
+        gs = gridspec.GridSpec(2, 2, figure=self.fig, hspace=0.45, wspace=0.35)
+
+        Z             = stats["Z"]
+        profil_long   = stats["profil_long"]
+        profil_transv = stats["profil_transv"]
+
+        BLUE  = "#2563EB"
+        CYAN  = "#0EA5E9"
+        GREEN = "#10B981"
+        RED   = "#EF4444"
+        GRAY  = "#E2E8F0"
+
+        def _style(ax, title):
+            ax.set_facecolor("#F8FAFC")
+            ax.set_title(title, fontsize=10, fontweight="600", color="#1E293B", pad=8)
+            ax.tick_params(colors="#64748B", labelsize=8)
+            for sp in ax.spines.values(): sp.set_color(GRAY)
+            ax.grid(axis="y", color=GRAY, linewidth=0.8)
+
+        # ── 1. Profil longitudinal ──
+        ax1 = self.fig.add_subplot(gs[0, 0])
+        x1  = np.arange(len(profil_long))
+        ax1.fill_between(x1, profil_long, alpha=0.15, color=BLUE)
+        ax1.plot(x1, profil_long, color=BLUE, linewidth=2, marker="o",
+                 markersize=3)
+        ax1.axhline(np.mean(profil_long), color=CYAN, linestyle="--",
+                    linewidth=1, label="Moyenne")
+        ax1.legend(fontsize=8)
+        ax1.set_xlabel("Points de mesure", fontsize=8, color="#64748B")
+        ax1.set_ylabel("Hauteur (mm)", fontsize=8, color="#64748B")
+        _style(ax1, "Profil longitudinal")
+
+        # ── 2. Profil transversal ──
+        ax2 = self.fig.add_subplot(gs[0, 1])
+        x2  = np.arange(len(profil_transv))
+        ax2.fill_between(x2, profil_transv, alpha=0.15, color=GREEN)
+        ax2.plot(x2, profil_transv, color=GREEN, linewidth=2, marker="s",
+                 markersize=3)
+        ax2.axhline(np.mean(profil_transv), color=CYAN, linestyle="--",
+                    linewidth=1, label="Moyenne")
+        ax2.legend(fontsize=8)
+        ax2.set_xlabel("Capteurs (largeur)", fontsize=8, color="#64748B")
+        ax2.set_ylabel("Hauteur (mm)", fontsize=8, color="#64748B")
+        _style(ax2, "Profil transversal")
+
+        # ── 3. Heatmap ──
+        ax3 = self.fig.add_subplot(gs[1, 0])
+        im  = ax3.imshow(Z, cmap="RdYlGn_r", aspect="auto",
+                         interpolation="nearest")
+        self.fig.colorbar(im, ax=ax3, shrink=0.8, label="mm", pad=0.02)
+        ax3.set_xlabel("Capteurs (largeur)", fontsize=8, color="#64748B")
+        ax3.set_ylabel("Points de mesure", fontsize=8, color="#64748B")
+        _style(ax3, "Carte thermique — Défauts")
+        ax3.grid(False)
+
+        # ── 4. Histogramme ──
+        ax4   = self.fig.add_subplot(gs[1, 1])
+        Z_flat = Z.flatten()
+        n, bins, patches = ax4.hist(Z_flat, bins=20, color=BLUE,
+                                    edgecolor="white", linewidth=0.5, alpha=0.85)
+        # Colorer les barres selon le seuil
+        threshold = np.mean(Z_flat) + 2 * np.std(Z_flat)
+        for patch, left in zip(patches, bins[:-1]):
+            patch.set_facecolor(RED if left > threshold else BLUE)
+        ax4.axvline(np.mean(Z_flat), color=CYAN, linestyle="--",
+                    linewidth=1.5, label="Moyenne")
+        ax4.axvline(threshold, color=RED, linestyle=":",
+                    linewidth=1.5, label="Seuil obstacles")
+        ax4.legend(fontsize=8)
+        ax4.set_xlabel("Hauteur (mm)", fontsize=8, color="#64748B")
+        ax4.set_ylabel("Fréquence", fontsize=8, color="#64748B")
+        _style(ax4, "Distribution des hauteurs")
+
+        self.draw_idle()
+
+
+# =========================================================
+# ====================== SIDEBAR =========================
+# =========================================================
+
+class Sidebar(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Sidebar")
+        self.setFixedWidth(260)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        # ── Logo / Titre ──
+        header = QFrame()
+        header.setStyleSheet("background:#1E293B; border-bottom:1px solid #334155;")
+        header.setFixedHeight(72)
+        h_lay  = QVBoxLayout(header)
+        h_lay.setContentsMargins(20, 0, 20, 0)
+
+        lbl_app = QLabel(APP_NAME)
+        lbl_app.setStyleSheet(
+            "font-size:17px; font-weight:700; color:#F1F5F9; letter-spacing:0.5px;"
+        )
+        lbl_ver = QLabel(f"v{APP_VERSION}  ·  {APP_AUTHOR}")
+        lbl_ver.setStyleSheet("font-size:10px; color:#64748B;")
+
+        h_lay.addSpacing(12)
+        h_lay.addWidget(lbl_app)
+        h_lay.addWidget(lbl_ver)
+
+        layout.addWidget(header)
+
+        # ── Navigation ──
+        nav_frame = QFrame()
+        nav_frame.setStyleSheet("background:#1E293B;")
+        nav_lay = QVBoxLayout(nav_frame)
+        nav_lay.setContentsMargins(12, 20, 12, 10)
+        nav_lay.setSpacing(4)
+
+        section_lbl = QLabel("NAVIGATION")
+        section_lbl.setStyleSheet(
+            "font-size:9px; font-weight:700; color:#475569; letter-spacing:1.5px; padding-left:8px;"
+        )
+        nav_lay.addWidget(section_lbl)
+        nav_lay.addSpacing(8)
+
+        self.btn_import  = SidebarNavBtn("📂", "Importer CSV")
+        self.btn_view3d  = SidebarNavBtn("🗻", "Vue 3D")
+        self.btn_charts  = SidebarNavBtn("📊", "Graphiques")
+        self.btn_report  = SidebarNavBtn("📄", "Rapport")
+
+        for btn in [self.btn_import, self.btn_view3d, self.btn_charts, self.btn_report]:
+            nav_lay.addWidget(btn)
+
+        nav_lay.addSpacing(20)
+
+        section_lbl2 = QLabel("CAMÉRA 3D")
+        section_lbl2.setStyleSheet(
+            "font-size:9px; font-weight:700; color:#475569; letter-spacing:1.5px; padding-left:8px;"
+        )
+        nav_lay.addWidget(section_lbl2)
+        nav_lay.addSpacing(8)
+
+        self.btn_default = SidebarNavBtn("🧭", "Vue Isométrique")
+        self.btn_top     = SidebarNavBtn("⬆", "Vue Haut")
+        self.btn_profile = SidebarNavBtn("➡", "Vue Profil")
+        self.btn_rotate  = SidebarNavBtn("🔄", "Rotation Auto")
+
+        for btn in [self.btn_default, self.btn_top, self.btn_profile, self.btn_rotate]:
+            nav_lay.addWidget(btn)
+
+        nav_lay.addStretch()
+        layout.addWidget(nav_frame)
+
+        # ── Pied de sidebar ──
+        footer = QFrame()
+        footer.setStyleSheet("background:#1E293B; border-top:1px solid #334155;")
+        f_lay  = QVBoxLayout(footer)
+        f_lay.setContentsMargins(20, 12, 20, 12)
+
+        self.lbl_status = QLabel("Aucun fichier chargé")
+        self.lbl_status.setStyleSheet("font-size:10px; color:#64748B;")
+        self.lbl_status.setWordWrap(True)
+
+        f_lay.addWidget(self.lbl_status)
+        layout.addWidget(footer)
+
+
+# =========================================================
+# ====================== MAIN WINDOW =====================
+# =========================================================
+
+class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowTitle(f"{APP_NAME}  ·  Mémoire Ingénieur Informatique")
+        self.resize(1400, 860)
+        self.setMinimumSize(1100, 700)
 
+        self.rotating       = False
         self.rotation_timer = QTimer()
-        self.rotation_timer.timeout.connect(self.rotate_surface)
-        self.rotating = False
+        self.rotation_timer.timeout.connect(self._rotate_step)
 
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        self._build_ui()
+        self._connect_signals()
 
-        # ================= SIDEBAR =================
-        sidebar_frame = QFrame()
-        sidebar_frame.setObjectName("Sidebar")
-        sidebar_frame.setFixedWidth(280)
+    # ── UI Construction ───────────────────────────────────
 
-        sidebar_layout = QVBoxLayout(sidebar_frame)
-        sidebar_layout.setContentsMargins(20, 20, 20, 20)
-        sidebar_layout.setSpacing(15)
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        title = QLabel("Dashboard")
-        title.setStyleSheet("font-size:18px; font-weight:600; color:#00e5ff;")
-        sidebar_layout.addWidget(title)
-        sidebar_layout.addSpacing(10)
+        # Sidebar
+        self.sidebar = Sidebar()
+        root.addWidget(self.sidebar)
 
-        self.btn_import = QPushButton("📂  Importer un fichier CSV")
-        self.btn_rotate = QPushButton("🔄  Rotation Auto")
-        self.btn_default = QPushButton("🧭  Vue Isométrique")
-        self.btn_top = QPushButton("⬆  Vue Haut")
-        self.btn_profile = QPushButton("➡  Vue Profil")
-        self.btn_report = QPushButton("📄  Générer un rapport")
+        # Contenu principal
+        self.content = QWidget()
+        self.content.setStyleSheet("background:#F8FAFC;")
+        content_lay = QVBoxLayout(self.content)
+        content_lay.setContentsMargins(0, 0, 0, 0)
+        content_lay.setSpacing(0)
 
-        for btn in [
-            self.btn_import,
-            self.btn_rotate,
-            self.btn_default,
-            self.btn_top,
-            self.btn_profile,
-            self.btn_report
-        ]:
-            btn.setCursor(Qt.PointingHandCursor)
-            sidebar_layout.addWidget(btn)
+        # Header du contenu
+        content_lay.addWidget(self._build_header())
 
-        sidebar_layout.addStretch()
+        # Zone de métriques KPI
+        content_lay.addWidget(self._build_kpi_row())
 
-        # ================= ANALYTICS CARD =================
-        self.analytics_card = QFrame()
-        self.analytics_card.setObjectName("Card")
+        # Onglets (3D + Graphiques)
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("QTabWidget { background: transparent; }")
 
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(25)
-        shadow.setOffset(0, 0)
-        shadow.setColor(QColor(0, 229, 255, 60))
-        self.analytics_card.setGraphicsEffect(shadow)
+        # Onglet 3D
+        tab_3d = QWidget()
+        tab_3d.setStyleSheet("background:#FFFFFF;")
+        lay_3d = QVBoxLayout(tab_3d)
+        lay_3d.setContentsMargins(0, 0, 0, 0)
+        self.surface3d = Surface3DCanvas()
+        lay_3d.addWidget(self.surface3d)
+        self.tabs.addTab(tab_3d, "  🗻  Modèle 3D  ")
 
-        card_layout = QVBoxLayout(self.analytics_card)
-        card_layout.setContentsMargins(15, 15, 15, 15)
+        # Onglet Graphiques
+        tab_charts = QWidget()
+        tab_charts.setStyleSheet("background:#FFFFFF;")
+        lay_charts = QVBoxLayout(tab_charts)
+        lay_charts.setContentsMargins(0, 0, 0, 0)
+        self.charts = ChartsPanel()
+        lay_charts.addWidget(self.charts)
+        self.tabs.addTab(tab_charts, "  📊  Analyses  ")
 
-        analytics_title = QLabel("Interprétation")
-        analytics_title.setStyleSheet("font-size:16px; font-weight:bold; color:#00e5ff;")
+        # Onglet Données
+        tab_data = QWidget()
+        tab_data.setStyleSheet("background:#FFFFFF; padding:16px;")
+        lay_data = QVBoxLayout(tab_data)
+        lay_data.setContentsMargins(16, 16, 16, 16)
+        self.table = self._build_table()
+        lay_data.addWidget(self.table)
+        self.tabs.addTab(tab_data, "  🗃  Données  ")
 
-        self.analytics_label = QLabel("Aucune donnée chargée")
-        self.analytics_label.setWordWrap(True)
-        self.analytics_label.setStyleSheet("font-size:13px; color:#cccccc;")
+        content_lay.addWidget(self.tabs, stretch=1)
 
-        card_layout.addWidget(analytics_title)
-        card_layout.addSpacing(10)
-        card_layout.addWidget(self.analytics_label)
+        # Barre de statut
+        self.status_bar = QStatusBar()
+        self.status_bar.showMessage("Prêt  ·  Importez un fichier CSV pour commencer l'analyse.")
+        self.setStatusBar(self.status_bar)
 
-        sidebar_layout.addWidget(self.analytics_card)
+        root.addWidget(self.content, stretch=1)
 
-        # ================= 3D VIEW =================
-        self.surface3d = Surface3D()
+    def _build_header(self) -> QFrame:
+        header = QFrame()
+        header.setStyleSheet(
+            "background:#FFFFFF; border-bottom:1px solid #E2E8F0;"
+        )
+        header.setFixedHeight(64)
+        lay = QHBoxLayout(header)
+        lay.setContentsMargins(24, 0, 24, 0)
 
-        main_layout.addWidget(sidebar_frame)
-        main_layout.addWidget(self.surface3d)
+        self.lbl_title = QLabel("Tableau de bord — Analyse de surface routière")
+        self.lbl_title.setStyleSheet(
+            "font-size:16px; font-weight:700; color:#0F172A;"
+        )
 
-        # ================= CONNECTIONS =================
-        self.btn_import.clicked.connect(self.import_csv)
-        self.btn_rotate.clicked.connect(self.toggle_rotation)
-        self.btn_top.clicked.connect(self.surface3d.view_top)
-        self.btn_profile.clicked.connect(self.surface3d.view_profile)
-        self.btn_default.clicked.connect(self.surface3d.view_default)
-        self.btn_report.clicked.connect(self.export_report)
+        self.lbl_filename = QLabel("Aucun fichier")
+        self.lbl_filename.setStyleSheet("font-size:12px; color:#94A3B8;")
+
+        self.badge_state = QLabel("—")
+        self.badge_state.setObjectName("BadgeGood")
+        self.badge_state.setAlignment(Qt.AlignCenter)
+        self.badge_state.setFixedHeight(26)
+
+        lay.addWidget(self.lbl_title)
+        lay.addStretch()
+        lay.addWidget(self.lbl_filename)
+        lay.addSpacing(16)
+        lay.addWidget(self.badge_state)
+
+        return header
+
+    def _build_kpi_row(self) -> QFrame:
+        frame = QFrame()
+        frame.setStyleSheet("background:#F8FAFC; border-bottom:1px solid #E2E8F0;")
+        frame.setFixedHeight(110)
+        lay = QHBoxLayout(frame)
+        lay.setContentsMargins(20, 12, 20, 12)
+        lay.setSpacing(14)
+
+        self.card_avg      = MetricCard("Hauteur Moyenne",   "—", "cm",  "Valeur centrale",  "#2563EB")
+        self.card_max      = MetricCard("Hauteur Maximale",  "—", "cm",  "Pic enregistré",   "#EF4444")
+        self.card_std      = MetricCard("Écart-type",        "—", "cm",  "Dispersion",       "#F59E0B")
+        self.card_obstacles= MetricCard("Obstacles Détectés","—", "",    "Dépassements 2σ",  "#8B5CF6")
+        self.card_score    = MetricCard("Score Qualité",     "—", "/100","Indice global",     "#10B981")
+        self.card_length   = MetricCard("Longueur Estimée",  "—", "m",   "Section analysée", "#0EA5E9")
+
+        for card in [self.card_avg, self.card_max, self.card_std,
+                     self.card_obstacles, self.card_score, self.card_length]:
+            lay.addWidget(card, stretch=1)
+
+        return frame
+
+    def _build_table(self) -> QTableWidget:
+        table = QTableWidget(0, 7)
+        table.setHorizontalHeaderLabels([
+            "Capteur", "Moy. (cm)", "Max (cm)", "Min (cm)",
+            "Std (cm)", "Obstacles", "État"
+        ])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        table.setAlternatingRowColors(True)
+        table.setStyleSheet(
+            "QTableWidget { alternate-background-color: #F8FAFC; }"
+        )
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        return table
+
+    # ── Signals ───────────────────────────────────────────
+
+    def _connect_signals(self):
+        self.sidebar.btn_import.clicked.connect(self.import_csv)
+        self.sidebar.btn_view3d.clicked.connect(lambda: self.tabs.setCurrentIndex(0))
+        self.sidebar.btn_charts.clicked.connect(lambda: self.tabs.setCurrentIndex(1))
+        self.sidebar.btn_report.clicked.connect(self.export_report)
+        self.sidebar.btn_default.clicked.connect(self.surface3d.view_default)
+        self.sidebar.btn_top.clicked.connect(self.surface3d.view_top)
+        self.sidebar.btn_profile.clicked.connect(self.surface3d.view_profile)
+        self.sidebar.btn_rotate.clicked.connect(self.toggle_rotation)
+
+    # ── Actions ───────────────────────────────────────────
 
     def import_csv(self):
-        fname, _ = QFileDialog.getOpenFileName(self, "CSV", "", "CSV (*.csv)")
+        fname, _ = QFileDialog.getOpenFileName(
+            self, "Sélectionner un fichier CSV", "",
+            "Fichiers CSV (*.csv);;Tous les fichiers (*)"
+        )
         if not fname:
             return
 
         model = RoadDataModel(fname)
-        Z = model.Z
+        Z     = model.Z
+
+        if Z is None or Z.size == 0:
+            QMessageBox.critical(self, "Erreur", "Fichier CSV invalide ou vide.")
+            return
+
+        stats = RoadAnalytics.compute(Z)
+        if not stats:
+            QMessageBox.warning(self, "Avertissement", "Données insuffisantes pour l'analyse.")
+            return
+
+        # Mise à jour de l'interface
+        self._update_kpi(stats)
+        self._update_header(model, stats)
+        self._update_table(Z, stats)
         self.surface3d.update_surface(Z)
+        self.charts.update_charts(stats)
 
-        avg, maxv, std, state, color, interpretation = RoadAnalytics.compute(Z)
+        self.sidebar.lbl_status.setText(
+            f"📁  {model.filename}\n🕐  {model.load_time}"
+        )
+        self.status_bar.showMessage(
+            f"Analyse complète  ·  {model.filename}  ·  "
+            f"{Z.shape[0]} × {Z.shape[1]} points  ·  {model.load_time}"
+        )
+        self.tabs.setCurrentIndex(0)
 
-        # LONGUEUR ROUTE
-        nb_lignes = Z.shape[0]
-        longueur_m = (nb_lignes / 8 * 25) / 100
+    def _update_kpi(self, s: dict):
+        self.card_avg.update(f"{s['avg']:.2f}")
+        self.card_max.update(f"{s['maxv']:.2f}", s["iri_score"])
+        self.card_std.update(f"{s['std']:.2f}")
+        self.card_obstacles.update(str(s["nb_obstacles"]))
+        self.card_score.update(str(s["quality_score"]))
+        self.card_length.update(f"{s['longueur_m']:.2f}")
 
-        self.analytics_label.setText(f"""
-        <b>Analyse de surface routière</b><br>
-        - Route mesurée: {longueur_m:.2f} m<br>
-        - Moyenne: {avg:.2f} cm<br>
-        - Max: {maxv:.2f} cm<br>
-        - Écart-type: {std:.2f} cm<br><br>
+    def _update_header(self, model: RoadDataModel, s: dict):
+        self.lbl_filename.setText(model.filename)
 
-        <b>État:</b> {state}<br>
-        {interpretation}
-        """)
+        badge_map = {
+            "Good":     ("BadgeGood",     s["state"]),
+            "Warning":  ("BadgeWarning",  s["state"]),
+            "Critical": ("BadgeCritical", s["state"]),
+        }
+        obj_name, text = badge_map.get(s["badge"], ("BadgeGood", "—"))
+        self.badge_state.setObjectName(obj_name)
+        self.badge_state.setText(f"  État : {text}  ")
+        # Forcer le rechargement du style
+        self.badge_state.style().unpolish(self.badge_state)
+        self.badge_state.style().polish(self.badge_state)
+
+    def _update_table(self, Z: np.ndarray, stats: dict):
+        self.table.setRowCount(0)
+        threshold = np.mean(Z) + 2 * np.std(Z)
+
+        for i, col in enumerate(Z.T):
+            col_clean = col[~np.isnan(col)]
+            if col_clean.size == 0:
+                continue
+
+            avg  = float(np.mean(col_clean)) / 10
+            maxv = float(np.max(col_clean))  / 10
+            minv = float(np.min(col_clean))  / 10
+            std  = float(np.std(col_clean))  / 10
+            obs  = int(np.count_nonzero(col > threshold))
+            etat = "✅ Bon" if maxv < 1 else ("⚠️ Moyen" if maxv < 3 else "❌ Critique")
+
+            row = self.table.rowCount()
+            self.table.insertRow(row)
+            for j, val in enumerate([
+                f"C{i+1:02d}", f"{avg:.2f}", f"{maxv:.2f}",
+                f"{minv:.2f}", f"{std:.2f}", str(obs), etat
+            ]):
+                item = QTableWidgetItem(val)
+                item.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(row, j, item)
 
     def toggle_rotation(self):
-        if not self.rotating:
-            self.rotation_timer.start(16)
-            self.btn_rotate.setText("⏹  Stop Rotation")
-            self.rotating = True
-        else:
+        if self.rotating:
             self.rotation_timer.stop()
-            self.btn_rotate.setText("🔄  Rotation Auto")
-            self.rotating = False
+            self.sidebar.btn_rotate.setText("  🔄   Rotation Auto")
+        else:
+            self.rotation_timer.start(16)
+            self.sidebar.btn_rotate.setText("  ⏹   Arrêter Rotation")
+        self.rotating = not self.rotating
 
-    def rotate_surface(self):
+    def _rotate_step(self):
         self.surface3d.rotate_step()
 
     def export_report(self):
-        fname, _ = QFileDialog.getSaveFileName(
-            self, "Enregistrer Rapport PDF", "", "PDF (*.pdf)"
+        QMessageBox.information(
+            self, "Rapport",
+            "La génération de rapport PDF (via ReportLab) sera disponible\n"
+            "dans la prochaine version de RouBot Analyzer."
         )
-        if not fname:
-            return
-        if not fname.endswith(".pdf"):
-            fname += ".pdf"
 
-        try:
-            # Capture image 3D
-            buf = io.BytesIO()
-            self.surface3d.figure.savefig(buf, format='png', facecolor=self.surface3d.figure.get_facecolor())
-            buf.seek(0)
-
-            # Créer le PDF
-            doc = SimpleDocTemplate(fname, pagesize=A4,
-                                    rightMargin=2*cm, leftMargin=2*cm,
-                                    topMargin=2*cm, bottomMargin=2*cm)
-            elements = []
-
-            # Styles
-            styles = getSampleStyleSheet()
-            styles.add(ParagraphStyle(
-                name='AnalysisText',
-                fontName='Helvetica',
-                fontSize=12,
-                leading=16,
-                textColor=colors.black
-            ))
-            styles.add(ParagraphStyle(
-                name='MyTitle',
-                fontName='Helvetica-Bold',
-                fontSize=16,
-                leading=20,
-                textColor=colors.blue
-            ))
-
-            # Titre
-            elements.append(Paragraph("Analyse de Surface Routière", styles['MyTitle']))
-            elements.append(Spacer(1, 0.5*cm))
-
-            # Image 3D
-            img = Image(buf)
-            img.drawHeight = 12*cm
-            img.drawWidth = 18*cm
-            elements.append(img)
-            elements.append(Spacer(1, 0.5*cm))
-
-            # Texte complet
-            analysis_text = self.analytics_label.text()
-            analysis_text = re.sub(r"<br\s*/?>", "\n", analysis_text)
-            analysis_text = re.sub(r"<.*?>", "", analysis_text)
-            elements.append(Paragraph(analysis_text, styles['AnalysisText']))
-
-            # Générer PDF
-            doc.build(elements)
-
-            QMessageBox.information(self, "Rapport", f"Rapport enregistré avec succès:\n{fname}")
-
-        except Exception as e:
-            QMessageBox.critical(self, "Erreur", f"Impossible de générer le PDF:\n{str(e)}")
 
 # =========================================================
 # ====================== SPLASH ==========================
 # =========================================================
+
 class SplashScreen(QWidget):
     def __init__(self):
         super().__init__()
-        self.setFixedSize(650, 380)
-        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setFixedSize(680, 420)
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
-        self.container = QFrame(self)
-        self.container.setGeometry(0, 0, 650, 380)
-        self.container.setStyleSheet("""
-            background-color: #121212;
-            border-radius: 20px;
+        container = QFrame(self)
+        container.setGeometry(0, 0, 680, 420)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: #FFFFFF;
+                border-radius: 20px;
+                border: 1px solid #E2E8F0;
+            }
         """)
 
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(40)
-        shadow.setOffset(0, 0)
-        shadow.setColor(QColor(0, 229, 255, 120))
-        self.container.setGraphicsEffect(shadow)
+        shadow.setBlurRadius(60)
+        shadow.setOffset(0, 12)
+        shadow.setColor(QColor(15, 23, 42, 50))
+        container.setGraphicsEffect(shadow)
 
-        layout = QVBoxLayout(self.container)
-        layout.setAlignment(Qt.AlignCenter)
+        lay = QVBoxLayout(container)
+        lay.setAlignment(Qt.AlignCenter)
+        lay.setContentsMargins(60, 40, 60, 40)
+        lay.setSpacing(0)
 
-        title = QLabel("RouBot Application")
-        title.setStyleSheet("font-size:32px; font-weight:700; color:#00e5ff;")
+        # Icône / badge
+        badge = QLabel("🛣")
+        badge.setStyleSheet("font-size:48px;")
+        badge.setAlignment(Qt.AlignCenter)
+
+        title = QLabel(APP_NAME)
+        title.setStyleSheet(
+            "font-size:30px; font-weight:700; color:#0F172A; letter-spacing:-0.5px;"
+        )
         title.setAlignment(Qt.AlignCenter)
 
-        subtitle = QLabel("Surveiller la qualité de la route")
-        subtitle.setStyleSheet("font-size:14px; color:#888;")
+        subtitle = QLabel("Analyse de Qualité de Surface Routière")
+        subtitle.setStyleSheet("font-size:14px; color:#64748B; margin-top:4px;")
         subtitle.setAlignment(Qt.AlignCenter)
 
-        # Barre de progression
-        self.progress_bg = QFrame()
-        self.progress_bg.setFixedSize(400, 8)
-        self.progress_bg.setStyleSheet("background:#2a2a2a; border-radius:4px;")
+        divider = QFrame()
+        divider.setFrameShape(QFrame.HLine)
+        divider.setStyleSheet("color:#E2E8F0; margin:24px 0;")
 
-        self.progress_bar = QFrame(self.progress_bg)
-        self.progress_bar.setFixedSize(0, 8)
-        self.progress_bar.setStyleSheet("""
-            background:qlineargradient(
-                x1:0, y1:0, x2:1, y2:0,
-                stop:0 #00e5ff,
-                stop:1 #3700b3
-            );
-            border-radius:4px;
+        self.lbl_step = QLabel("Initialisation du système…")
+        self.lbl_step.setStyleSheet("font-size:12px; color:#94A3B8;")
+        self.lbl_step.setAlignment(Qt.AlignCenter)
+
+        # Barre de progression custom
+        prog_bg = QFrame()
+        prog_bg.setFixedSize(480, 6)
+        prog_bg.setStyleSheet("background:#E2E8F0; border-radius:3px;")
+
+        self.prog_bar = QFrame(prog_bg)
+        self.prog_bar.setFixedSize(0, 6)
+        self.prog_bar.setStyleSheet("""
+            background: qlineargradient(x1:0,y1:0,x2:1,y2:0,
+                stop:0 #2563EB, stop:1 #0EA5E9);
+            border-radius:3px;
         """)
 
-        # 🔥 Label pourcentage
-        self.percent_label = QLabel("0%")
-        self.percent_label.setStyleSheet("""
-            font-size:16px;
-            font-weight:600;
-            color:#00e5ff;
-        """)
-        self.percent_label.setAlignment(Qt.AlignCenter)
+        self.lbl_pct = QLabel("0 %")
+        self.lbl_pct.setStyleSheet(
+            "font-size:13px; font-weight:600; color:#2563EB; margin-top:10px;"
+        )
+        self.lbl_pct.setAlignment(Qt.AlignCenter)
 
-        layout.addStretch()
-        layout.addWidget(title)
-        layout.addSpacing(15)
-        layout.addWidget(subtitle)
-        layout.addSpacing(60)
-        layout.addWidget(self.progress_bg, alignment=Qt.AlignCenter)
-        layout.addSpacing(10)
-        layout.addWidget(self.percent_label)
-        layout.addStretch()
+        version_lbl = QLabel(f"v{APP_VERSION}  ·  Mémoire d'ingénieur en Informatique")
+        version_lbl.setStyleSheet("font-size:10px; color:#CBD5E1; margin-top:20px;")
+        version_lbl.setAlignment(Qt.AlignCenter)
 
-        # Fade in
+        lay.addWidget(badge)
+        lay.addSpacing(8)
+        lay.addWidget(title)
+        lay.addWidget(subtitle)
+        lay.addWidget(divider)
+        lay.addWidget(self.lbl_step)
+        lay.addSpacing(16)
+        lay.addWidget(prog_bg, alignment=Qt.AlignCenter)
+        lay.addWidget(self.lbl_pct)
+        lay.addStretch()
+        lay.addWidget(version_lbl)
+
+        # Animations
         self.setWindowOpacity(0)
-        self.fade_in = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_in.setDuration(800)
-        self.fade_in.setStartValue(0)
-        self.fade_in.setEndValue(1)
-        self.fade_in.start()
+        fade = QPropertyAnimation(self, b"windowOpacity")
+        fade.setDuration(600)
+        fade.setStartValue(0)
+        fade.setEndValue(1)
+        fade.start()
 
-        # Animation barre
-        self.anim = QPropertyAnimation(self.progress_bar, b"minimumWidth")
-        self.anim.setDuration(3000)
+        self._steps = [
+            "Chargement des modules de traitement…",
+            "Initialisation du moteur graphique 3D…",
+            "Préparation des algorithmes d'analyse…",
+            "Démarrage de l'interface…",
+        ]
+        self._step_i = 0
+        self._step_timer = QTimer()
+        self._step_timer.timeout.connect(self._next_step)
+        self._step_timer.start(700)
+
+        self.anim = QPropertyAnimation(self.prog_bar, b"minimumWidth")
+        self.anim.setDuration(3200)
         self.anim.setStartValue(0)
-        self.anim.setEndValue(400)
+        self.anim.setEndValue(480)
         self.anim.setEasingCurve(QEasingCurve.InOutCubic)
-
-        # 🔥 Mise à jour du pourcentage pendant animation
-        self.anim.valueChanged.connect(self.update_percentage)
-
-        self.anim.finished.connect(self.finish)
+        self.anim.valueChanged.connect(self._update_pct)
+        self.anim.finished.connect(self._finish)
         self.anim.start()
 
-    # 🔥 Calcul du pourcentage
-    def update_percentage(self, value):
-        percent = int((value / 400) * 100)
-        self.percent_label.setText(f"{percent}%")
+    def _next_step(self):
+        if self._step_i < len(self._steps):
+            self.lbl_step.setText(self._steps[self._step_i])
+            self._step_i += 1
 
-    def finish(self):
-        self.fade_out = QPropertyAnimation(self, b"windowOpacity")
-        self.fade_out.setDuration(500)
-        self.fade_out.setStartValue(1)
-        self.fade_out.setEndValue(0)
-        self.fade_out.finished.connect(self.launch_main)
-        self.fade_out.start()
+    def _update_pct(self, val):
+        pct = int((val / 480) * 100)
+        self.lbl_pct.setText(f"{pct} %")
 
-    def launch_main(self):
+    def _finish(self):
+        self._step_timer.stop()
+        self.lbl_step.setText("Démarrage…")
+        fade_out = QPropertyAnimation(self, b"windowOpacity")
+        fade_out.setDuration(400)
+        fade_out.setStartValue(1)
+        fade_out.setEndValue(0)
+        fade_out.finished.connect(self._launch)
+        fade_out.start()
+        self._fade_out = fade_out  # garder référence
+
+    def _launch(self):
         self.close()
-        self.main = Dashboard()
-        self.main.setWindowTitle("RouBot Application <TBag & Meik>")
-        self.main.resize(1500, 850)
+        self.main = MainWindow()
         self.main.show()
 
 
 # =========================================================
-# ====================== DARK STYLE ======================
-# =========================================================
-
-DARK_STYLE = """
-QWidget {
-    background-color: #0f0f0f;
-    color: white;
-    font-family: Segoe UI;
-}
-
-#Sidebar {
-    background-color: #141414;
-    border-right: 1px solid #2a2a2a;
-}
-
-#Card {
-    background-color: #1c1c1c;
-    border-radius: 16px;
-    border: 1px solid #2a2a2a;
-}
-
-QPushButton {
-    background-color: #1e1e1e;
-    border: 1px solid #2f2f2f;
-    padding: 12px;
-    border-radius: 12px;
-    font-size: 14px;
-    text-align: left;
-}
-
-QPushButton:hover {
-    background-color: #252525;
-    border: 1px solid #00e5ff;
-}
-
-QPushButton:pressed {
-    background-color: #3700b3;
-}
-"""
-
-# =========================================================
-# ====================== MAIN ============================
+# ====================== ENTRY POINT =====================
 # =========================================================
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setStyleSheet(DARK_STYLE)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
+    app.setStyle("Fusion")
+    app.setStyleSheet(APP_STYLE)
 
     splash = SplashScreen()
     splash.show()
-
     sys.exit(app.exec())
