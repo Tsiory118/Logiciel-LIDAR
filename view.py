@@ -40,7 +40,7 @@ from matplotlib.colors import LinearSegmentedColormap
 # =========================================================
 
 APP_NAME    = "RouBot Analyzer"
-APP_VERSION = "2.0.0"
+APP_VERSION = "1.0.0"
 APP_AUTHOR  = "TBag & Meik"
 
 PALETTE = {
@@ -694,7 +694,7 @@ class Sidebar(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME}  ·  Mémoire Ingénieur Informatique")
+        self.setWindowTitle(f"{APP_NAME}  · EN")
         self.resize(1400, 860)
         self.setMinimumSize(1100, 700)
 
@@ -1031,7 +1031,7 @@ class SplashScreen(QWidget):
         )
         self.lbl_pct.setAlignment(Qt.AlignCenter)
 
-        version_lbl = QLabel(f"v{APP_VERSION}  ·  Mémoire d'ingénieur en Informatique")
+        version_lbl = QLabel(f"v{APP_VERSION}  ·  Mémoire d'ingénieur ")
         version_lbl.setStyleSheet("font-size:10px; color:#CBD5E1; margin-top:20px;")
         version_lbl.setAlignment(Qt.AlignCenter)
 
@@ -1049,11 +1049,11 @@ class SplashScreen(QWidget):
 
         # Animations
         self.setWindowOpacity(0)
-        fade = QPropertyAnimation(self, b"windowOpacity")
-        fade.setDuration(600)
-        fade.setStartValue(0)
-        fade.setEndValue(1)
-        fade.start()
+        self.fade = QPropertyAnimation(self, b"windowOpacity")
+        self.fade.setDuration(400)
+        self.fade.setStartValue(0)
+        self.fade.setEndValue(1)
+        self.fade.start()
 
         self._steps = [
             "Chargement des modules de traitement…",
