@@ -803,11 +803,30 @@ class MainWindow(QMainWindow):
 
     def _build_kpi_row(self) -> QFrame:
         frame = QFrame()
-        frame.setStyleSheet("background:#F8FAFC; border-bottom:1px solid #E2E8F0;")
-        frame.setFixedHeight(110)
+        frame.setStyleSheet("""
+    QFrame {
+        background-color: #FFFFFF;
+        border-bottom: 1px solid #E2E8F0;
+        border-radius: 10px;
+    }
+
+    QLabel {
+        color: #1F2937;
+        font-size: 16px;
+        font-weight: 600;
+    }
+
+    QLabel#valueLabel {
+        color: #0F172A;
+        font-size: 22px;
+        font-weight: 800;
+    }
+""")
+
+        frame.setFixedHeight(100)
         lay = QHBoxLayout(frame)
-        lay.setContentsMargins(20, 12, 20, 12)
-        lay.setSpacing(14)
+        lay.setContentsMargins(10, 2, 10, 2)
+        lay.setSpacing(4)
 
         self.card_avg      = MetricCard("Hauteur Moyenne",   "—", "cm",  "Valeur centrale",  "#2563EB")
         self.card_max      = MetricCard("Hauteur Maximale",  "—", "cm",  "Pic enregistré",   "#EF4444")
