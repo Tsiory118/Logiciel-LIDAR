@@ -290,8 +290,8 @@ class RoadAnalytics:
             pente = 0.0
 
         # -- Longueur estimée --
-        nb_lignes  = Z.shape[0]
-        longueur_m = float((nb_lignes / cls.SAMPLE_RATE) * cls.SENSOR_SPACING * 8)
+        nb_lignes = Z.shape[0]
+        longueur_m = float((nb_lignes / 8) * 15)/100
 
         # -- Profil transversal --
         profil_transv = np.mean(Z, axis=0)
