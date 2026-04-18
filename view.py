@@ -535,7 +535,7 @@ class ChartsPanel(FigureCanvasQTAgg):
 
         def _style(ax, title):
             ax.set_facecolor("#F8FAFC")
-            ax.set_title(title, fontsize=10, fontweight="600", color="#1E293B", pad=8)
+            ax.set_title(title, fontsize=8, fontweight="600", color="#1E293B", pad=2)
             ax.tick_params(colors="#64748B", labelsize=8)
             for sp in ax.spines.values(): sp.set_color(GRAY)
             ax.grid(axis="y", color=GRAY, linewidth=0.8)
