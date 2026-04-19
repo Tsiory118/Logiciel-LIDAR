@@ -828,15 +828,13 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(10, 2, 10, 2)
         lay.setSpacing(4)
 
-        self.card_avg      = MetricCard("Hauteur Moyenne",   "—", "cm",  "Valeur centrale",  "#2563EB")
-        self.card_max      = MetricCard("Hauteur Maximale",  "—", "cm",  "Pic enregistré",   "#EF4444")
-        self.card_std      = MetricCard("Écart-type",        "—", "cm",  "Dispersion",       "#F59E0B")
-        self.card_obstacles= MetricCard("Obstacles Détectés","—", "",    "Dépassements 2σ",  "#8B5CF6")
-        self.card_score    = MetricCard("Score Qualité",     "—", "/100","Indice global",     "#10B981")
-        self.card_length   = MetricCard("Longueur Estimée",  "—", "m",   "Section analysée", "#0EA5E9")
+        # Seulement 4 cartes : Moyenne, Max, Écart-type, Longueur
+        self.card_avg    = MetricCard("Hauteur Moyenne",  "—", "cm", "Valeur centrale",  "#2563EB")
+        self.card_max    = MetricCard("Hauteur Maximale", "—", "cm", "Pic enregistré",   "#EF4444")
+        self.card_std    = MetricCard("Écart-type",       "—", "cm", "Dispersion",       "#F59E0B")
+        self.card_length = MetricCard("Longueur Estimée", "—", "m",  "Section analysée", "#0EA5E9")
 
-        for card in [self.card_avg, self.card_max, self.card_std,
-                     self.card_obstacles, self.card_score, self.card_length]:
+        for card in [self.card_avg, self.card_max, self.card_std, self.card_length]:
             lay.addWidget(card, stretch=1)
 
         return frame
@@ -911,8 +909,6 @@ class MainWindow(QMainWindow):
         self.card_avg.update(f"{s['avg']:.2f}")
         self.card_max.update(f"{s['maxv']:.2f}", s["iri_score"])
         self.card_std.update(f"{s['std']:.2f}")
-        self.card_obstacles.update(str(s["nb_obstacles"]))
-        self.card_score.update(str(s["quality_score"]))
         self.card_length.update(f"{s['longueur_m']:.2f}")
 
     def _update_header(self, model: RoadDataModel, s: dict):
