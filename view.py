@@ -7,6 +7,9 @@ Thème        : Light Mode — Professionnel
 """
 
 import sys
+import io
+import os
+import tempfile
 import numpy as np
 from datetime import datetime
 
@@ -33,6 +36,18 @@ from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 from matplotlib.colors import LinearSegmentedColormap
+
+# ReportLab imports
+from reportlab.lib.pagesizes import A4
+from reportlab.lib import colors
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import cm, mm
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    HRFlowable, PageBreak, Image as RLImage, KeepTogether
+)
+from reportlab.pdfgen import canvas as rl_canvas
 
 
 # =========================================================
@@ -254,11 +269,10 @@ class RoadDataModel:
 class RoadAnalytics:
     """Calcule tous les indicateurs de qualité de surface."""
 
-    # Seuils IRI (International Roughness Index) simplifiés
-    SEUIL_BON      = 1.0   # < 1 cm → Bon
-    SEUIL_MOYEN    = 3.0   # < 3 cm → Moyen
-    SAMPLE_RATE    = 8     # capteurs / mètre
-    SENSOR_SPACING = 0.125 # mètres entre capteurs
+    SEUIL_BON      = 1.0
+    SEUIL_MOYEN    = 3.0
+    SAMPLE_RATE    = 8
+    SENSOR_SPACING = 0.125
 
     @classmethod
     def compute(cls, Z: np.ndarray) -> dict:
@@ -266,22 +280,18 @@ class RoadAnalytics:
         if Z_clean.size == 0:
             return {}
 
-        # -- Métriques de base (en cm) --
         avg    = float(np.mean(Z_clean)) / 10
         maxv   = float(np.max(Z_clean))  / 10
         minv   = float(np.min(Z_clean))  / 10
         std    = float(np.std(Z_clean))  / 10
         median = float(np.median(Z_clean)) / 10
 
-        # -- Surface & rugosité --
         rugosite  = float(np.std(Z))
         variation = float(np.max(Z) - np.min(Z))
 
-        # -- Obstacles (dépassement 2σ) --
         threshold    = np.mean(Z) + 2 * np.std(Z)
         nb_obstacles = int(np.count_nonzero(Z > threshold))
 
-        # -- Profil longitudinal & pente --
         profil_long = np.mean(Z, axis=1)
         if len(profil_long) > 1:
             coeffs = np.polyfit(range(len(profil_long)), profil_long, 1)
@@ -289,14 +299,11 @@ class RoadAnalytics:
         else:
             pente = 0.0
 
-        # -- Longueur estimée --
-        nb_lignes = Z.shape[0]
-        longueur_m = float((nb_lignes / 8) * 15)/100
+        nb_lignes  = Z.shape[0]
+        longueur_m = float((nb_lignes / 8) * 15) / 100
 
-        # -- Profil transversal --
         profil_transv = np.mean(Z, axis=0)
 
-        # -- État global --
         if maxv < cls.SEUIL_BON:
             state          = "Bonne"
             badge          = "Good"
@@ -316,7 +323,6 @@ class RoadAnalytics:
             interpretation = "Défauts critiques, intervention urgente requise."
             iri_score      = "IRI > 3  —  Mauvais état"
 
-        # -- Score qualité 0-100 --
         quality_score = max(0, min(100, int(100 - (maxv / 6) * 100)))
 
         return {
@@ -330,6 +336,607 @@ class RoadAnalytics:
             "quality_score": quality_score,
             "Z": Z,
         }
+
+
+# =========================================================
+# ====================== PDF GENERATOR ===================
+# =========================================================
+
+def _hex_to_rl_color(hex_color: str):
+    """Convertit une couleur hex en objet ReportLab Color."""
+    hex_color = hex_color.lstrip("#")
+    r, g, b = (int(hex_color[i:i+2], 16) / 255.0 for i in (0, 2, 4))
+    return colors.Color(r, g, b)
+
+
+class PDFReportGenerator:
+    """Génère un rapport PDF professionnel avec ReportLab."""
+
+    # Couleurs du thème
+    C_BLUE   = _hex_to_rl_color("#2563EB")
+    C_CYAN   = _hex_to_rl_color("#0EA5E9")
+    C_GREEN  = _hex_to_rl_color("#10B981")
+    C_ORANGE = _hex_to_rl_color("#F59E0B")
+    C_RED    = _hex_to_rl_color("#EF4444")
+    C_DARK   = _hex_to_rl_color("#1E293B")
+    C_GRAY   = _hex_to_rl_color("#64748B")
+    C_LIGHT  = _hex_to_rl_color("#F8FAFC")
+    C_BORDER = _hex_to_rl_color("#E2E8F0")
+    C_WHITE  = colors.white
+
+    def __init__(self, output_path: str, model: "RoadDataModel", stats: dict):
+        self.output_path = output_path
+        self.model       = model
+        self.stats       = stats
+        self.styles      = self._build_styles()
+        self._tmp_files  = []  # fichiers temporaires à supprimer
+
+    def _build_styles(self):
+        base = getSampleStyleSheet()
+        custom = {
+            "Title": ParagraphStyle(
+                "Title", parent=base["Normal"],
+                fontSize=26, textColor=self.C_DARK,
+                fontName="Helvetica-Bold",
+                spaceAfter=4, alignment=TA_LEFT,
+            ),
+            "Subtitle": ParagraphStyle(
+                "Subtitle", parent=base["Normal"],
+                fontSize=12, textColor=self.C_GRAY,
+                fontName="Helvetica",
+                spaceAfter=2, alignment=TA_LEFT,
+            ),
+            "SectionHeader": ParagraphStyle(
+                "SectionHeader", parent=base["Normal"],
+                fontSize=13, textColor=self.C_BLUE,
+                fontName="Helvetica-Bold",
+                spaceBefore=14, spaceAfter=6,
+                borderPadding=(0, 0, 4, 0),
+            ),
+            "Body": ParagraphStyle(
+                "Body", parent=base["Normal"],
+                fontSize=10, textColor=self.C_DARK,
+                fontName="Helvetica",
+                spaceAfter=6, leading=15,
+            ),
+            "BodyBold": ParagraphStyle(
+                "BodyBold", parent=base["Normal"],
+                fontSize=10, textColor=self.C_DARK,
+                fontName="Helvetica-Bold",
+                spaceAfter=4,
+            ),
+            "Footer": ParagraphStyle(
+                "Footer", parent=base["Normal"],
+                fontSize=8, textColor=self.C_GRAY,
+                fontName="Helvetica",
+                alignment=TA_CENTER,
+            ),
+            "Caption": ParagraphStyle(
+                "Caption", parent=base["Normal"],
+                fontSize=8, textColor=self.C_GRAY,
+                fontName="Helvetica-Oblique",
+                alignment=TA_CENTER, spaceAfter=8,
+            ),
+            "StateGood": ParagraphStyle(
+                "StateGood", parent=base["Normal"],
+                fontSize=11, textColor=self.C_GREEN,
+                fontName="Helvetica-Bold",
+            ),
+            "StateWarning": ParagraphStyle(
+                "StateWarning", parent=base["Normal"],
+                fontSize=11, textColor=self.C_ORANGE,
+                fontName="Helvetica-Bold",
+            ),
+            "StateCritical": ParagraphStyle(
+                "StateCritical", parent=base["Normal"],
+                fontSize=11, textColor=self.C_RED,
+                fontName="Helvetica-Bold",
+            ),
+        }
+        return custom
+
+    # ── Génération des figures matplotlib ──────────────────
+
+    def _render_fig_to_tmp(self, fig, suffix="_chart.png", dpi=150) -> str:
+        tmp = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        fig.savefig(tmp.name, dpi=dpi, bbox_inches="tight",
+                    facecolor="white", edgecolor="none")
+        tmp.close()
+        self._tmp_files.append(tmp.name)
+        return tmp.name
+
+    def _make_profiles_figure(self) -> str:
+        Z             = self.stats["Z"]
+        profil_long   = self.stats["profil_long"]
+        profil_transv = self.stats["profil_transv"]
+
+        fig, axes = plt.subplots(1, 2, figsize=(12, 3.5), facecolor="white")
+        BLUE  = "#2563EB"
+        GREEN = "#10B981"
+        CYAN  = "#0EA5E9"
+
+        # Profil longitudinal
+        ax1 = axes[0]
+        x1  = np.arange(len(profil_long))
+        ax1.fill_between(x1, profil_long, alpha=0.15, color=BLUE)
+        ax1.plot(x1, profil_long, color=BLUE, linewidth=2, marker="o", markersize=3)
+        ax1.axhline(np.mean(profil_long), color=CYAN, linestyle="--",
+                    linewidth=1.2, label="Moyenne")
+        ax1.set_title("Profil Longitudinal", fontsize=10, fontweight="bold",
+                      color="#1E293B")
+        ax1.set_xlabel("Points de mesure", fontsize=8, color="#64748B")
+        ax1.set_ylabel("Hauteur (mm)", fontsize=8, color="#64748B")
+        ax1.legend(fontsize=8)
+        ax1.set_facecolor("#F8FAFC")
+        ax1.grid(axis="y", color="#E2E8F0", linewidth=0.8)
+        for sp in ax1.spines.values(): sp.set_color("#E2E8F0")
+        ax1.tick_params(colors="#64748B", labelsize=8)
+
+        # Profil transversal
+        ax2 = axes[1]
+        x2  = np.arange(len(profil_transv))
+        ax2.fill_between(x2, profil_transv, alpha=0.15, color=GREEN)
+        ax2.plot(x2, profil_transv, color=GREEN, linewidth=2, marker="s", markersize=3)
+        ax2.axhline(np.mean(profil_transv), color=CYAN, linestyle="--",
+                    linewidth=1.2, label="Moyenne")
+        ax2.set_title("Profil Transversal", fontsize=10, fontweight="bold",
+                      color="#1E293B")
+        ax2.set_xlabel("Capteurs (largeur)", fontsize=8, color="#64748B")
+        ax2.set_ylabel("Hauteur (mm)", fontsize=8, color="#64748B")
+        ax2.legend(fontsize=8)
+        ax2.set_facecolor("#F8FAFC")
+        ax2.grid(axis="y", color="#E2E8F0", linewidth=0.8)
+        for sp in ax2.spines.values(): sp.set_color("#E2E8F0")
+        ax2.tick_params(colors="#64748B", labelsize=8)
+
+        fig.tight_layout()
+        path = self._render_fig_to_tmp(fig, "_profiles.png")
+        plt.close(fig)
+        return path
+
+    def _make_heatmap_hist_figure(self) -> str:
+        Z = self.stats["Z"]
+        fig, axes = plt.subplots(1, 2, figsize=(12, 3.5), facecolor="white")
+        BLUE = "#2563EB"
+        CYAN = "#0EA5E9"
+        RED  = "#EF4444"
+
+        # Heatmap
+        ax3 = axes[0]
+        im  = ax3.imshow(Z, cmap="RdYlGn_r", aspect="auto", interpolation="nearest")
+        fig.colorbar(im, ax=ax3, shrink=0.9, label="mm", pad=0.02)
+        ax3.set_title("Carte Thermique des Défauts", fontsize=10, fontweight="bold",
+                      color="#1E293B")
+        ax3.set_xlabel("Capteurs (largeur)", fontsize=8, color="#64748B")
+        ax3.set_ylabel("Points de mesure", fontsize=8, color="#64748B")
+        ax3.tick_params(colors="#64748B", labelsize=8)
+
+        # Histogramme
+        ax4    = axes[1]
+        Z_flat = Z.flatten()
+        threshold = np.mean(Z_flat) + 2 * np.std(Z_flat)
+        n, bins, patches = ax4.hist(Z_flat, bins=20, color=BLUE,
+                                     edgecolor="white", linewidth=0.5, alpha=0.85)
+        for patch, left in zip(patches, bins[:-1]):
+            patch.set_facecolor(RED if left > threshold else BLUE)
+        ax4.axvline(np.mean(Z_flat), color=CYAN, linestyle="--",
+                    linewidth=1.5, label="Moyenne")
+        ax4.axvline(threshold, color=RED, linestyle=":",
+                    linewidth=1.5, label="Seuil obstacles")
+        ax4.legend(fontsize=8)
+        ax4.set_title("Distribution des Hauteurs", fontsize=10, fontweight="bold",
+                      color="#1E293B")
+        ax4.set_xlabel("Hauteur (mm)", fontsize=8, color="#64748B")
+        ax4.set_ylabel("Frequence", fontsize=8, color="#64748B")
+        ax4.set_facecolor("#F8FAFC")
+        ax4.grid(axis="y", color="#E2E8F0", linewidth=0.8)
+        for sp in ax4.spines.values(): sp.set_color("#E2E8F0")
+        ax4.tick_params(colors="#64748B", labelsize=8)
+
+        fig.tight_layout()
+        path = self._render_fig_to_tmp(fig, "_heatmap_hist.png")
+        plt.close(fig)
+        return path
+
+    def _make_3d_figure(self) -> str:
+        Z = self.stats["Z"]
+        cmap = LinearSegmentedColormap.from_list(
+            "road", ["#1D4ED8", "#0EA5E9", "#10B981", "#F59E0B", "#EF4444"]
+        )
+        fig = plt.figure(figsize=(8, 5), facecolor="white")
+        ax  = fig.add_subplot(111, projection="3d")
+        rows, cols = Z.shape
+        X, Y = np.meshgrid(range(cols), range(rows))
+        surf = ax.plot_surface(X, Y, Z, cmap=cmap, edgecolor="none",
+                               antialiased=True, shade=True, alpha=0.95)
+        fig.colorbar(surf, ax=ax, shrink=0.5, aspect=10,
+                     label="Hauteur (mm)", pad=0.1)
+        ax.set_facecolor("#F8FAFC")
+        ax.set_xlabel("Largeur (capteurs)", fontsize=8)
+        ax.set_ylabel("Longueur (points)", fontsize=8)
+        ax.set_zlabel("Hauteur (mm)", fontsize=8)
+        ax.set_title("Modele Surfacique 3D", fontsize=11,
+                     fontweight="bold", color="#1E293B")
+        ax.view_init(30, -60)
+
+        fig.tight_layout()
+        path = self._render_fig_to_tmp(fig, "_3d.png", dpi=120)
+        plt.close(fig)
+        return path
+
+    # ── Construction du document ────────────────────────────
+
+    def _header_footer(self, canvas_obj, doc):
+        """Dessine l'en-tête et le pied de page sur chaque page."""
+        canvas_obj.saveState()
+        W, H = A4
+
+        # Bande bleue en haut
+        canvas_obj.setFillColor(self.C_DARK)
+        canvas_obj.rect(0, H - 48 * mm, W, 48 * mm, fill=1, stroke=0)
+
+        # Titre dans la bande
+        canvas_obj.setFont("Helvetica-Bold", 18)
+        canvas_obj.setFillColor(colors.white)
+        canvas_obj.drawString(20 * mm, H - 22 * mm, APP_NAME)
+
+        canvas_obj.setFont("Helvetica", 9)
+        canvas_obj.setFillColor(_hex_to_rl_color("#94A3B8"))
+        canvas_obj.drawString(20 * mm, H - 31 * mm,
+                              "Rapport d'Analyse de Surface Routiere")
+
+        # Numéro de page (droite)
+        canvas_obj.setFont("Helvetica", 8)
+        canvas_obj.setFillColor(_hex_to_rl_color("#94A3B8"))
+        canvas_obj.drawRightString(W - 20 * mm, H - 26 * mm,
+                                   f"Page {doc.page}")
+
+        # Trait de séparation bas
+        canvas_obj.setStrokeColor(self.C_BORDER)
+        canvas_obj.setLineWidth(0.5)
+        canvas_obj.line(20 * mm, 14 * mm, W - 20 * mm, 14 * mm)
+
+        # Pied de page
+        canvas_obj.setFont("Helvetica", 7.5)
+        canvas_obj.setFillColor(self.C_GRAY)
+        canvas_obj.drawString(20 * mm, 9 * mm,
+                              f"{APP_NAME} v{APP_VERSION}  |  {APP_AUTHOR}")
+        canvas_obj.drawRightString(W - 20 * mm, 9 * mm,
+                                   f"Genere le {datetime.now().strftime('%d/%m/%Y a %H:%M')}")
+
+        canvas_obj.restoreState()
+
+    def _kpi_table(self) -> Table:
+        s = self.stats
+        data = [
+            ["Indicateur", "Valeur", "Unite", "Interpretation"],
+            ["Hauteur Moyenne",   f"{s['avg']:.3f}",  "cm",  "Valeur centrale de la surface"],
+            ["Hauteur Maximale",  f"{s['maxv']:.3f}", "cm",  "Pic enregistre (point le + haut)"],
+            ["Hauteur Minimale",  f"{s['minv']:.3f}", "cm",  "Point le plus bas"],
+            ["Ecart-type",        f"{s['std']:.3f}",  "cm",  "Dispersion des mesures"],
+            ["Mediane",           f"{s['median']:.3f}", "cm", "Valeur mediane"],
+            ["Rugosite (sigma)",  f"{s['rugosite']:.3f}", "mm", "Rugosité brute de surface"],
+            ["Variation totale",  f"{s['variation']:.3f}", "mm", "Amplitude max-min"],
+            ["Nb Obstacles",      str(s['nb_obstacles']), "", "Points depassant 2 sigma"],
+            ["Pente longitudinale", f"{s['pente']:.4f}", "mm/pt", "Inclinaison axiale estimee"],
+            ["Longueur estimee",  f"{s['longueur_m']:.2f}", "m", "Section analysee"],
+            ["Score qualite",     f"{s['quality_score']} / 100", "", s['iri_score']],
+        ]
+
+        col_widths = [5 * cm, 3 * cm, 2 * cm, 7.5 * cm]
+        tbl = Table(data, colWidths=col_widths, repeatRows=1)
+
+        style = TableStyle([
+            # En-tête
+            ("BACKGROUND",    (0, 0), (-1, 0), self.C_DARK),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, 0), 9),
+            ("ALIGN",         (0, 0), (-1, 0), "CENTER"),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
+            ("TOPPADDING",    (0, 0), (-1, 0), 8),
+            # Corps
+            ("FONTNAME",  (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE",  (0, 1), (-1, -1), 9),
+            ("ALIGN",     (1, 1), (2, -1), "CENTER"),
+            ("ALIGN",     (0, 1), (0, -1), "LEFT"),
+            ("TOPPADDING",    (0, 1), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 6),
+            # Lignes alternées
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, _hex_to_rl_color("#F8FAFC")]),
+            # Grille
+            ("GRID",       (0, 0), (-1, -1), 0.5, self.C_BORDER),
+            ("LINEBELOW",  (0, 0), (-1, 0),  1.0, self.C_BLUE),
+            # Valeurs numériques en bleu
+            ("TEXTCOLOR",  (1, 1), (2, -1), self.C_BLUE),
+            ("FONTNAME",   (1, 1), (2, -1), "Helvetica-Bold"),
+        ])
+        tbl.setStyle(style)
+        return tbl
+
+    def _sensor_table(self) -> Table:
+        Z = self.stats["Z"]
+        threshold = np.mean(Z) + 2 * np.std(Z)
+
+        headers = ["Capteur", "Moy (cm)", "Max (cm)", "Min (cm)",
+                   "Std (cm)", "Obstacles", "Etat"]
+        col_widths = [2.2*cm, 2.4*cm, 2.4*cm, 2.4*cm, 2.4*cm, 2.4*cm, 3.3*cm]
+
+        data = [headers]
+        for i, col in enumerate(Z.T):
+            col_clean = col[~np.isnan(col)]
+            if col_clean.size == 0:
+                continue
+            avg  = float(np.mean(col_clean)) / 10
+            maxv = float(np.max(col_clean))  / 10
+            minv = float(np.min(col_clean))  / 10
+            std  = float(np.std(col_clean))  / 10
+            obs  = int(np.count_nonzero(col > threshold))
+            etat = "Bon" if maxv < 1 else ("Moyen" if maxv < 3 else "Critique")
+            data.append([
+                f"C{i+1:02d}",
+                f"{avg:.3f}", f"{maxv:.3f}", f"{minv:.3f}",
+                f"{std:.3f}", str(obs), etat
+            ])
+
+        tbl = Table(data, colWidths=col_widths, repeatRows=1)
+
+        # Style de base
+        style_cmds = [
+            ("BACKGROUND",    (0, 0), (-1, 0), self.C_DARK),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, 0), 8.5),
+            ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("FONTNAME",      (0, 1), (-1, -1), "Helvetica"),
+            ("FONTSIZE",      (0, 1), (-1, -1), 8.5),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, _hex_to_rl_color("#F8FAFC")]),
+            ("GRID",    (0, 0), (-1, -1), 0.4, self.C_BORDER),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.0, self.C_BLUE),
+        ]
+
+        # Colorier la colonne État
+        for row_idx, row in enumerate(data[1:], start=1):
+            etat = row[6]
+            if etat == "Bon":
+                style_cmds += [
+                    ("TEXTCOLOR",    (6, row_idx), (6, row_idx), self.C_GREEN),
+                    ("FONTNAME",     (6, row_idx), (6, row_idx), "Helvetica-Bold"),
+                ]
+            elif etat == "Moyen":
+                style_cmds += [
+                    ("TEXTCOLOR",    (6, row_idx), (6, row_idx), self.C_ORANGE),
+                    ("FONTNAME",     (6, row_idx), (6, row_idx), "Helvetica-Bold"),
+                ]
+            else:
+                style_cmds += [
+                    ("TEXTCOLOR",    (6, row_idx), (6, row_idx), self.C_RED),
+                    ("FONTNAME",     (6, row_idx), (6, row_idx), "Helvetica-Bold"),
+                    ("BACKGROUND",   (6, row_idx), (6, row_idx),
+                     _hex_to_rl_color("#FEF2F2")),
+                ]
+
+        tbl.setStyle(TableStyle(style_cmds))
+        return tbl
+
+    def _state_badge_para(self) -> Paragraph:
+        s     = self.stats
+        badge = s["badge"]
+        if badge == "Good":
+            style_key = "StateGood"
+            label     = "ETAT : BONNE"
+            prefix    = "[OK] "
+        elif badge == "Warning":
+            style_key = "StateWarning"
+            label     = "ETAT : MOYENNE"
+            prefix    = "[!]  "
+        else:
+            style_key = "StateCritical"
+            label     = "ETAT : CRITIQUE"
+            prefix    = "[!!] "
+        return Paragraph(f"{prefix}{label}", self.styles[style_key])
+
+    # ── Point d'entrée ──────────────────────────────────────
+
+    def generate(self):
+        doc = SimpleDocTemplate(
+            self.output_path,
+            pagesize=A4,
+            leftMargin=20 * mm,
+            rightMargin=20 * mm,
+            topMargin=52 * mm,   # espace pour l'en-tête
+            bottomMargin=22 * mm,
+            title=f"Rapport RouBot — {self.model.filename}",
+            author=APP_AUTHOR,
+            subject="Analyse de qualité de surface routière",
+        )
+
+        story = []
+        s = self.stats
+
+        # ── Page de garde info ──────────────────────────────
+        story.append(Spacer(1, 6 * mm))
+        story.append(Paragraph("Rapport d'Analyse de Surface Routiere",
+                                self.styles["Title"]))
+        story.append(Paragraph(
+            f"Fichier : {self.model.filename}   |   "
+            f"Genere le {self.model.load_time}",
+            self.styles["Subtitle"]
+        ))
+        story.append(Spacer(1, 3 * mm))
+        story.append(HRFlowable(width="100%", thickness=1,
+                                 color=self.C_BORDER, spaceAfter=8))
+
+        # Résumé exécutif
+        story.append(self._state_badge_para())
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(s["interpretation"], self.styles["Body"]))
+        story.append(Paragraph(
+            f"Score Qualite Global : <b>{s['quality_score']} / 100</b>   |   "
+            f"{s['iri_score']}",
+            self.styles["Body"]
+        ))
+
+        # ── Section KPI ─────────────────────────────────────
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph("Indicateurs Cles de Performance (KPI)",
+                                self.styles["SectionHeader"]))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                 color=self.C_BLUE, spaceAfter=6))
+        story.append(self._kpi_table())
+
+        # ── Section Graphiques ───────────────────────────────
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph("Visualisations des Profils",
+                                self.styles["SectionHeader"]))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                 color=self.C_BLUE, spaceAfter=6))
+
+        path_profiles = self._make_profiles_figure()
+        story.append(RLImage(path_profiles, width=17 * cm, height=6 * cm))
+        story.append(Paragraph(
+            "Figure 1 — Profil longitudinal (gauche) et profil transversal (droite) "
+            "de la surface analysee.",
+            self.styles["Caption"]
+        ))
+
+        story.append(Spacer(1, 3 * mm))
+        path_hm = self._make_heatmap_hist_figure()
+        story.append(RLImage(path_hm, width=17 * cm, height=6 * cm))
+        story.append(Paragraph(
+            "Figure 2 — Carte thermique des defauts (gauche) et distribution "
+            "statistique des hauteurs (droite).",
+            self.styles["Caption"]
+        ))
+
+        # ── Section 3D ───────────────────────────────────────
+        story.append(PageBreak())
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph("Modele Surfacique 3D",
+                                self.styles["SectionHeader"]))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                 color=self.C_BLUE, spaceAfter=6))
+
+        path_3d = self._make_3d_figure()
+        story.append(RLImage(path_3d, width=14 * cm, height=9 * cm))
+        story.append(Paragraph(
+            "Figure 3 — Representation tridimensionnelle de la surface routiere. "
+            "Le degradé de couleur indique les niveaux de hauteur (bleu = bas, rouge = haut).",
+            self.styles["Caption"]
+        ))
+
+        # ── Section Données capteurs ─────────────────────────
+        story.append(Spacer(1, 4 * mm))
+        story.append(Paragraph("Analyse par Capteur",
+                                self.styles["SectionHeader"]))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                 color=self.C_BLUE, spaceAfter=6))
+        story.append(Paragraph(
+            f"Le tableau ci-dessous presente les statistiques individuelles de chacun "
+            f"des {self.stats['Z'].shape[1]} capteurs de la grille de mesure.",
+            self.styles["Body"]
+        ))
+        story.append(Spacer(1, 2 * mm))
+        story.append(self._sensor_table())
+
+        # ── Section Conclusion ───────────────────────────────
+        story.append(Spacer(1, 5 * mm))
+        story.append(Paragraph("Conclusion et Recommandations",
+                                self.styles["SectionHeader"]))
+        story.append(HRFlowable(width="100%", thickness=0.5,
+                                 color=self.C_BLUE, spaceAfter=6))
+
+        badge = s["badge"]
+        if badge == "Good":
+            rec = (
+                "La surface analysee presente une qualite conforme aux normes routieres "
+                "en vigueur. Aucune intervention immediate n'est requise. "
+                "Un suivi periodique (6 à 12 mois) est recommande pour maintenir cet etat."
+            )
+        elif badge == "Warning":
+            rec = (
+                "Des irregularites moderees ont ete detectees sur certaines sections. "
+                "Une surveillance rapprochee est recommandee. Des travaux de maintenance "
+                "preventive sont a envisager dans les 3 à 6 prochains mois "
+                "afin d'eviter une degradation plus importante."
+            )
+        else:
+            rec = (
+                "Des defauts critiques ont ete identifies, depassant les seuils IRI "
+                "acceptables. Une intervention urgente est requise. Les zones presentant "
+                "des obstacles (points > 2 sigma) doivent etre traitees en priorite "
+                "pour garantir la securite des usagers et prevenir des degradations "
+                "structurelles irreversibles."
+            )
+
+        story.append(Paragraph(rec, self.styles["Body"]))
+
+        # Tableau récapitulatif recommandations
+        reco_data = [
+            ["Critere", "Valeur mesuree", "Seuil acceptable", "Verdict"],
+            ["Hauteur max",
+             f"{s['maxv']:.2f} cm",
+             "< 3.0 cm",
+             "OK" if s['maxv'] < 3 else "HORS NORME"],
+            ["Score qualite",
+             f"{s['quality_score']} / 100",
+             ">= 60 / 100",
+             "OK" if s['quality_score'] >= 60 else "INSUFFISANT"],
+            ["Obstacles detectes",
+             str(s['nb_obstacles']),
+             "< 10",
+             "OK" if s['nb_obstacles'] < 10 else "ATTENTION"],
+        ]
+
+        reco_style = TableStyle([
+            ("BACKGROUND",    (0, 0), (-1, 0), self.C_DARK),
+            ("TEXTCOLOR",     (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",      (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 0), (-1, -1), 9),
+            ("ALIGN",         (0, 0), (-1, -1), "CENTER"),
+            ("TOPPADDING",    (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1),
+             [colors.white, _hex_to_rl_color("#F8FAFC")]),
+            ("GRID", (0, 0), (-1, -1), 0.4, self.C_BORDER),
+            ("LINEBELOW", (0, 0), (-1, 0), 1.0, self.C_BLUE),
+        ])
+
+        # Colorer les verdicts
+        for ri, row in enumerate(reco_data[1:], start=1):
+            verdict = row[3]
+            if "OK" in verdict:
+                reco_style.add("TEXTCOLOR",  (3, ri), (3, ri), self.C_GREEN)
+                reco_style.add("FONTNAME",   (3, ri), (3, ri), "Helvetica-Bold")
+            else:
+                reco_style.add("TEXTCOLOR",  (3, ri), (3, ri), self.C_RED)
+                reco_style.add("FONTNAME",   (3, ri), (3, ri), "Helvetica-Bold")
+                reco_style.add("BACKGROUND", (3, ri), (3, ri),
+                               _hex_to_rl_color("#FEF2F2"))
+
+        reco_tbl = Table(
+            reco_data,
+            colWidths=[4*cm, 4*cm, 4*cm, 5.5*cm],
+        )
+        reco_tbl.setStyle(reco_style)
+
+        story.append(Spacer(1, 3 * mm))
+        story.append(reco_tbl)
+
+        # ── Construction finale ──────────────────────────────
+        doc.build(story, onFirstPage=self._header_footer,
+                  onLaterPages=self._header_footer)
+
+        # Nettoyage des fichiers temporaires
+        for f in self._tmp_files:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
 
 
 # =========================================================
@@ -352,8 +959,6 @@ def h_separator():
 
 
 class MetricCard(QFrame):
-    """Carte indicateur KPI (valeur + label + sous-texte)."""
-
     def __init__(self, title: str, value: str = "—", unit: str = "",
                  sub: str = "", accent: str = "#2563EB", parent=None):
         super().__init__(parent)
@@ -364,13 +969,11 @@ class MetricCard(QFrame):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(4)
 
-        # Titre
         lbl_title = QLabel(title.upper())
         lbl_title.setStyleSheet(
-            f"font-size:10px; font-weight:700; color:#94A3B8; letter-spacing:1px;"
+            "font-size:10px; font-weight:700; color:#94A3B8; letter-spacing:1px;"
         )
 
-        # Valeur + unité
         row = QHBoxLayout()
         self.lbl_value = QLabel(value)
         self.lbl_value.setStyleSheet(
@@ -382,7 +985,6 @@ class MetricCard(QFrame):
         row.addWidget(lbl_unit)
         row.addStretch()
 
-        # Sous-texte
         self.lbl_sub = QLabel(sub)
         self.lbl_sub.setStyleSheet("font-size:11px; color:#94A3B8;")
 
@@ -409,8 +1011,6 @@ class SidebarNavBtn(QPushButton):
 # =========================================================
 
 class Surface3DCanvas(FigureCanvasQTAgg):
-    """Canvas Matplotlib pour la visualisation 3D de la surface routière."""
-
     CMAP = LinearSegmentedColormap.from_list(
         "road", ["#1D4ED8", "#0EA5E9", "#10B981", "#F59E0B", "#EF4444"]
     )
@@ -452,18 +1052,12 @@ class Surface3DCanvas(FigureCanvasQTAgg):
         self.ax.clear()
         rows, cols = Z.shape
         X, Y = np.meshgrid(range(cols), range(rows))
-
         surf = self.ax.plot_surface(
-            X, Y, Z,
-            cmap=self.CMAP,
-            edgecolor="none",
-            antialiased=True,
-            shade=True,
-            alpha=0.95
+            X, Y, Z, cmap=self.CMAP, edgecolor="none",
+            antialiased=True, shade=True, alpha=0.95
         )
         self.fig.colorbar(surf, ax=self.ax, shrink=0.5, aspect=10,
                           label="Hauteur (mm)", pad=0.1)
-
         self._style_axes()
         self.ax.set_xlabel("Largeur (capteurs)", labelpad=8, fontsize=9)
         self.ax.set_ylabel("Longueur (points)", labelpad=8, fontsize=9)
@@ -500,8 +1094,6 @@ class Surface3DCanvas(FigureCanvasQTAgg):
 # =========================================================
 
 class ChartsPanel(FigureCanvasQTAgg):
-    """Panel d'analyse multi-graphiques (profils + heatmap + histogramme)."""
-
     def __init__(self):
         self.fig = Figure(facecolor="#FFFFFF", tight_layout=True)
         super().__init__(self.fig)
@@ -540,12 +1132,10 @@ class ChartsPanel(FigureCanvasQTAgg):
             for sp in ax.spines.values(): sp.set_color(GRAY)
             ax.grid(axis="y", color=GRAY, linewidth=0.8)
 
-        # ── 1. Profil longitudinal ──
         ax1 = self.fig.add_subplot(gs[0, 0])
         x1  = np.arange(len(profil_long))
         ax1.fill_between(x1, profil_long, alpha=0.15, color=BLUE)
-        ax1.plot(x1, profil_long, color=BLUE, linewidth=2, marker="o",
-                 markersize=3)
+        ax1.plot(x1, profil_long, color=BLUE, linewidth=2, marker="o", markersize=3)
         ax1.axhline(np.mean(profil_long), color=CYAN, linestyle="--",
                     linewidth=1, label="Moyenne")
         ax1.legend(fontsize=8)
@@ -553,12 +1143,10 @@ class ChartsPanel(FigureCanvasQTAgg):
         ax1.set_ylabel("Hauteur (mm)", fontsize=8, color="#64748B")
         _style(ax1, "Profil longitudinal")
 
-        # ── 2. Profil transversal ──
         ax2 = self.fig.add_subplot(gs[0, 1])
         x2  = np.arange(len(profil_transv))
         ax2.fill_between(x2, profil_transv, alpha=0.15, color=GREEN)
-        ax2.plot(x2, profil_transv, color=GREEN, linewidth=2, marker="s",
-                 markersize=3)
+        ax2.plot(x2, profil_transv, color=GREEN, linewidth=2, marker="s", markersize=3)
         ax2.axhline(np.mean(profil_transv), color=CYAN, linestyle="--",
                     linewidth=1, label="Moyenne")
         ax2.legend(fontsize=8)
@@ -566,22 +1154,18 @@ class ChartsPanel(FigureCanvasQTAgg):
         ax2.set_ylabel("Hauteur (mm)", fontsize=8, color="#64748B")
         _style(ax2, "Profil transversal")
 
-        # ── 3. Heatmap ──
         ax3 = self.fig.add_subplot(gs[1, 0])
-        im  = ax3.imshow(Z, cmap="RdYlGn_r", aspect="auto",
-                         interpolation="nearest")
+        im  = ax3.imshow(Z, cmap="RdYlGn_r", aspect="auto", interpolation="nearest")
         self.fig.colorbar(im, ax=ax3, shrink=0.8, label="mm", pad=0.02)
         ax3.set_xlabel("Capteurs (largeur)", fontsize=8, color="#64748B")
         ax3.set_ylabel("Points de mesure", fontsize=8, color="#64748B")
         _style(ax3, "Carte thermique — Défauts")
         ax3.grid(False)
 
-        # ── 4. Histogramme ──
-        ax4   = self.fig.add_subplot(gs[1, 1])
+        ax4    = self.fig.add_subplot(gs[1, 1])
         Z_flat = Z.flatten()
         n, bins, patches = ax4.hist(Z_flat, bins=20, color=BLUE,
-                                    edgecolor="white", linewidth=0.5, alpha=0.85)
-        # Colorer les barres selon le seuil
+                                     edgecolor="white", linewidth=0.5, alpha=0.85)
         threshold = np.mean(Z_flat) + 2 * np.std(Z_flat)
         for patch, left in zip(patches, bins[:-1]):
             patch.set_facecolor(RED if left > threshold else BLUE)
@@ -611,7 +1195,6 @@ class Sidebar(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # ── Logo / Titre ──
         header = QFrame()
         header.setStyleSheet("background:#1E293B; border-bottom:1px solid #334155;")
         header.setFixedHeight(72)
@@ -628,10 +1211,8 @@ class Sidebar(QFrame):
         h_lay.addSpacing(12)
         h_lay.addWidget(lbl_app)
         h_lay.addWidget(lbl_ver)
-
         layout.addWidget(header)
 
-        # ── Navigation ──
         nav_frame = QFrame()
         nav_frame.setStyleSheet("background:#1E293B;")
         nav_lay = QVBoxLayout(nav_frame)
@@ -648,7 +1229,7 @@ class Sidebar(QFrame):
         self.btn_import  = SidebarNavBtn("📂", "Importer CSV")
         self.btn_view3d  = SidebarNavBtn("🗻", "Vue 3D")
         self.btn_charts  = SidebarNavBtn("📊", "Graphiques")
-        self.btn_report  = SidebarNavBtn("📄", "Rapport")
+        self.btn_report  = SidebarNavBtn("📄", "Exporter Rapport PDF")
 
         for btn in [self.btn_import, self.btn_view3d, self.btn_charts, self.btn_report]:
             nav_lay.addWidget(btn)
@@ -673,7 +1254,6 @@ class Sidebar(QFrame):
         nav_lay.addStretch()
         layout.addWidget(nav_frame)
 
-        # ── Pied de sidebar ──
         footer = QFrame()
         footer.setStyleSheet("background:#1E293B; border-top:1px solid #334155;")
         f_lay  = QVBoxLayout(footer)
@@ -694,7 +1274,7 @@ class Sidebar(QFrame):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{APP_NAME}  · EN")
+        self.setWindowTitle(f"{APP_NAME}  · FR")
         self.resize(1400, 860)
         self.setMinimumSize(1100, 700)
 
@@ -702,10 +1282,12 @@ class MainWindow(QMainWindow):
         self.rotation_timer = QTimer()
         self.rotation_timer.timeout.connect(self._rotate_step)
 
+        # Données courantes (pour export PDF)
+        self._current_model = None
+        self._current_stats = None
+
         self._build_ui()
         self._connect_signals()
-
-    # ── UI Construction ───────────────────────────────────
 
     def _build_ui(self):
         central = QWidget()
@@ -714,28 +1296,21 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # Sidebar
         self.sidebar = Sidebar()
         root.addWidget(self.sidebar)
 
-        # Contenu principal
         self.content = QWidget()
         self.content.setStyleSheet("background:#F8FAFC;")
         content_lay = QVBoxLayout(self.content)
         content_lay.setContentsMargins(0, 0, 0, 0)
         content_lay.setSpacing(0)
 
-        # Header du contenu
         content_lay.addWidget(self._build_header())
-
-        # Zone de métriques KPI
         content_lay.addWidget(self._build_kpi_row())
 
-        # Onglets (3D + Graphiques)
         self.tabs = QTabWidget()
         self.tabs.setStyleSheet("QTabWidget { background: transparent; }")
 
-        # Onglet 3D
         tab_3d = QWidget()
         tab_3d.setStyleSheet("background:#FFFFFF;")
         lay_3d = QVBoxLayout(tab_3d)
@@ -744,7 +1319,6 @@ class MainWindow(QMainWindow):
         lay_3d.addWidget(self.surface3d)
         self.tabs.addTab(tab_3d, "  🗻  Modèle 3D  ")
 
-        # Onglet Graphiques
         tab_charts = QWidget()
         tab_charts.setStyleSheet("background:#FFFFFF;")
         lay_charts = QVBoxLayout(tab_charts)
@@ -753,7 +1327,6 @@ class MainWindow(QMainWindow):
         lay_charts.addWidget(self.charts)
         self.tabs.addTab(tab_charts, "  📊  Analyses  ")
 
-        # Onglet Données
         tab_data = QWidget()
         tab_data.setStyleSheet("background:#FFFFFF; padding:16px;")
         lay_data = QVBoxLayout(tab_data)
@@ -764,11 +1337,11 @@ class MainWindow(QMainWindow):
 
         content_lay.addWidget(self.tabs, stretch=1)
 
-        # Barre de statut
         self.status_bar = QStatusBar()
-        self.status_bar.showMessage("Prêt  ·  Importez un fichier CSV pour commencer l'analyse.")
+        self.status_bar.showMessage(
+            "Prêt  ·  Importez un fichier CSV pour commencer l'analyse."
+        )
         self.setStatusBar(self.status_bar)
-
         root.addWidget(self.content, stretch=1)
 
     def _build_header(self) -> QFrame:
@@ -798,37 +1371,24 @@ class MainWindow(QMainWindow):
         lay.addWidget(self.lbl_filename)
         lay.addSpacing(16)
         lay.addWidget(self.badge_state)
-
         return header
 
     def _build_kpi_row(self) -> QFrame:
         frame = QFrame()
         frame.setStyleSheet("""
-    QFrame {
-        background-color: #FFFFFF;
-        border-bottom: 1px solid #E2E8F0;
-        border-radius: 10px;
-    }
-
-    QLabel {
-        color: #1F2937;
-        font-size: 16px;
-        font-weight: 600;
-    }
-
-    QLabel#valueLabel {
-        color: #0F172A;
-        font-size: 22px;
-        font-weight: 800;
-    }
-""")
-
+            QFrame {
+                background-color: #FFFFFF;
+                border-bottom: 1px solid #E2E8F0;
+                border-radius: 10px;
+            }
+            QLabel { color: #1F2937; font-size: 16px; font-weight: 600; }
+            QLabel#valueLabel { color: #0F172A; font-size: 22px; font-weight: 800; }
+        """)
         frame.setFixedHeight(100)
         lay = QHBoxLayout(frame)
         lay.setContentsMargins(10, 2, 10, 2)
         lay.setSpacing(4)
 
-        # Seulement 4 cartes : Moyenne, Max, Écart-type, Longueur
         self.card_avg    = MetricCard("Hauteur Moyenne",  "—", "cm", "Valeur centrale",  "#2563EB")
         self.card_max    = MetricCard("Hauteur Maximale", "—", "cm", "Pic enregistré",   "#EF4444")
         self.card_std    = MetricCard("Écart-type",       "—", "cm", "Dispersion",       "#F59E0B")
@@ -836,7 +1396,6 @@ class MainWindow(QMainWindow):
 
         for card in [self.card_avg, self.card_max, self.card_std, self.card_length]:
             lay.addWidget(card, stretch=1)
-
         return frame
 
     def _build_table(self) -> QTableWidget:
@@ -854,8 +1413,6 @@ class MainWindow(QMainWindow):
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionBehavior(QTableWidget.SelectRows)
         return table
-
-    # ── Signals ───────────────────────────────────────────
 
     def _connect_signals(self):
         self.sidebar.btn_import.clicked.connect(self.import_csv)
@@ -886,10 +1443,14 @@ class MainWindow(QMainWindow):
 
         stats = RoadAnalytics.compute(Z)
         if not stats:
-            QMessageBox.warning(self, "Avertissement", "Données insuffisantes pour l'analyse.")
+            QMessageBox.warning(self, "Avertissement",
+                                "Données insuffisantes pour l'analyse.")
             return
 
-        # Mise à jour de l'interface
+        # Stocker pour l'export PDF
+        self._current_model = model
+        self._current_stats = stats
+
         self._update_kpi(stats)
         self._update_header(model, stats)
         self._update_table(Z, stats)
@@ -913,7 +1474,6 @@ class MainWindow(QMainWindow):
 
     def _update_header(self, model: RoadDataModel, s: dict):
         self.lbl_filename.setText(model.filename)
-
         badge_map = {
             "Good":     ("BadgeGood",     s["state"]),
             "Warning":  ("BadgeWarning",  s["state"]),
@@ -922,7 +1482,6 @@ class MainWindow(QMainWindow):
         obj_name, text = badge_map.get(s["badge"], ("BadgeGood", "—"))
         self.badge_state.setObjectName(obj_name)
         self.badge_state.setText(f"  État : {text}  ")
-        # Forcer le rechargement du style
         self.badge_state.style().unpolish(self.badge_state)
         self.badge_state.style().polish(self.badge_state)
 
@@ -934,7 +1493,6 @@ class MainWindow(QMainWindow):
             col_clean = col[~np.isnan(col)]
             if col_clean.size == 0:
                 continue
-
             avg  = float(np.mean(col_clean)) / 10
             maxv = float(np.max(col_clean))  / 10
             minv = float(np.min(col_clean))  / 10
@@ -965,11 +1523,55 @@ class MainWindow(QMainWindow):
         self.surface3d.rotate_step()
 
     def export_report(self):
-        QMessageBox.information(
-            self, "Rapport",
-            "La génération de rapport PDF (via ReportLab) sera disponible\n"
-            "dans la prochaine version de RouBot Analyzer."
+        """Génère et sauvegarde le rapport PDF via ReportLab."""
+        if self._current_model is None or self._current_stats is None:
+            QMessageBox.warning(
+                self, "Aucune donnée",
+                "Veuillez d'abord importer un fichier CSV\n"
+                "avant de générer un rapport PDF."
+            )
+            return
+
+        # Suggérer un nom de fichier par défaut
+        default_name = (
+            self._current_model.filename.replace(".csv", "") +
+            f"_rapport_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
         )
+
+        save_path, _ = QFileDialog.getSaveFileName(
+            self, "Enregistrer le rapport PDF",
+            default_name,
+            "Fichiers PDF (*.pdf)"
+        )
+        if not save_path:
+            return
+
+        if not save_path.lower().endswith(".pdf"):
+            save_path += ".pdf"
+
+        # Génération
+        self.status_bar.showMessage("Génération du rapport PDF en cours…")
+        QApplication.processEvents()
+
+        try:
+            generator = PDFReportGenerator(
+                save_path, self._current_model, self._current_stats
+            )
+            generator.generate()
+
+            self.status_bar.showMessage(
+                f"Rapport PDF exporté avec succès : {save_path}"
+            )
+            QMessageBox.information(
+                self, "Rapport généré",
+                f"Le rapport PDF a été exporté avec succès :\n\n{save_path}"
+            )
+        except Exception as e:
+            self.status_bar.showMessage("Erreur lors de la génération du rapport.")
+            QMessageBox.critical(
+                self, "Erreur d'export",
+                f"Une erreur est survenue lors de la génération du PDF :\n\n{e}"
+            )
 
 
 # =========================================================
@@ -1004,7 +1606,6 @@ class SplashScreen(QWidget):
         lay.setContentsMargins(60, 40, 60, 40)
         lay.setSpacing(0)
 
-        # Icône / badge
         badge = QLabel("🛣")
         badge.setStyleSheet("font-size:48px;")
         badge.setAlignment(Qt.AlignCenter)
@@ -1027,7 +1628,6 @@ class SplashScreen(QWidget):
         self.lbl_step.setStyleSheet("font-size:12px; color:#94A3B8;")
         self.lbl_step.setAlignment(Qt.AlignCenter)
 
-        # Barre de progression custom
         prog_bg = QFrame()
         prog_bg.setFixedSize(480, 6)
         prog_bg.setStyleSheet("background:#E2E8F0; border-radius:3px;")
@@ -1046,7 +1646,7 @@ class SplashScreen(QWidget):
         )
         self.lbl_pct.setAlignment(Qt.AlignCenter)
 
-        version_lbl = QLabel(f"v{APP_VERSION}  ·  Mémoire d'ingénieur ")
+        version_lbl = QLabel(f"v{APP_VERSION}  ·  Mémoire d'ingénieur")
         version_lbl.setStyleSheet("font-size:10px; color:#CBD5E1; margin-top:20px;")
         version_lbl.setAlignment(Qt.AlignCenter)
 
@@ -1062,7 +1662,6 @@ class SplashScreen(QWidget):
         lay.addStretch()
         lay.addWidget(version_lbl)
 
-        # Animations
         self.setWindowOpacity(0)
         self.fade = QPropertyAnimation(self, b"windowOpacity")
         self.fade.setDuration(400)
@@ -1108,7 +1707,7 @@ class SplashScreen(QWidget):
         fade_out.setEndValue(0)
         fade_out.finished.connect(self._launch)
         fade_out.start()
-        self._fade_out = fade_out  # garder référence
+        self._fade_out = fade_out
 
     def _launch(self):
         self.close()
