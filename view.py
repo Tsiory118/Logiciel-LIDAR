@@ -760,8 +760,9 @@ class PDFReportGenerator:
 
         # ── Page de garde info ──────────────────────────────
         story.append(Spacer(1, 6 * mm))
-        story.append(Paragraph("Rapport d'Analyse de Surface Routiere",
+        story.append(Paragraph("Rapport d'Analyse par RouBot",
                                 self.styles["Title"]))
+        story.append(Spacer(1, 6 * mm))
         story.append(Paragraph(
             f"Fichier : {self.model.filename}   |   "
             f"Genere le {self.model.load_time}",
